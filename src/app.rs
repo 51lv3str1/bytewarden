@@ -135,7 +135,7 @@ impl App {
 
     pub fn move_down(&mut self) {
         let len = self.current_list().len();
-        if !len == 0 && self.selected_index < len - 1 {
+        if len > 0 && self.selected_index < len - 1 {
             self.selected_index += 1;
             if self.selected_index >= self.scroll_offset + 20 {
                 self.scroll_offset += 1;
