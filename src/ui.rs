@@ -205,81 +205,164 @@ fn draw_login(frame: &mut Frame, app: &App) {
 // ── Vault screen ───────────────────────────────────────────────────────────
 
 fn draw_vault(frame: &mut Frame, app: &App) {
+    use crate::app::{Focus, ITEM_FILTERS, ItemFilter};
+
     let area = frame.area();
 
-    let chunks = Layout::vertical([
-        Constraint::Length(3),
+    // Outer layout: header | body | status
+    let outer = Layout::vertical([
+        Constraint::Length(2),
         Constraint::Min(0),
-        Constraint::Length(3),
+        Constraint::Length(2),
     ])
     .split(area);
 
-    // Header
+    // Body split: sidebar (26%) | main list (74%)
+    let body = Layout::horizontal([
+        Constraint::Percentage(26),
+        Constraint::Percentage(74),
+    ])
+    .split(outer[1]);
+
+    // Sidebar: [1] Vaults (40%) | [2] Items (60%)
+    let sidebar = Layout::vertical([
+        Constraint::Percentage(35),
+        Constraint::Percentage(65),
+    ])
+    .split(body[0]);
+
+    // ── Header ────────────────────────────────────────────────────────────
+    let filter_label = app.active_filter.label();
     let header = Paragraph::new(Line::from(vec![
         Span::styled(" 🔐 bytewarden", Style::default().fg(COLOR_ACCENT).add_modifier(Modifier::BOLD)),
         Span::styled(
-            format!("  —  {} items", app.items.len()),
+            format!("  —  {} items  —  {}", app.filtered_items().len(), filter_label),
             Style::default().fg(COLOR_DIM),
         ),
     ]))
-    .block(
-        Block::default()
-            .borders(Borders::BOTTOM)
-            .border_style(Style::default().fg(COLOR_DIM)),
-    );
-    frame.render_widget(header, chunks[0]);
+    .block(Block::default().borders(Borders::BOTTOM)
+        .border_style(Style::default().fg(Color::Rgb(25, 28, 50))));
+    frame.render_widget(header, outer[0]);
 
-    // Item list
-    let list_items: Vec<ListItem> = app
-        .items
-        .iter()
-        .map(|item| {
-            let type_color = match item.item_type {
-                1 => Color::Blue,
-                2 => Color::Yellow,
-                3 => Color::Magenta,
-                _ => COLOR_DIM,
-            };
-            let mut spans = vec![
-                Span::styled(
-                    format!("[{}] ", item_type_label(item.item_type)),
-                    Style::default().fg(type_color),
-                ),
-                Span::raw(&item.name),
-            ];
-            if let Some(login) = &item.login {
-                if let Some(user) = &login.username {
-                    spans.push(Span::styled(
-                        format!("  {user}"),
-                        Style::default().fg(COLOR_DIM),
-                    ));
-                }
-            }
-            ListItem::new(Line::from(spans))
-        })
-        .collect();
-
-    let mut list_state = ListState::default();
-    list_state.select(Some(app.selected_index));
-
-    let list = List::new(list_items)
+    // ── [1] Vaults panel ──────────────────────────────────────────────────
+    // For now shows "My Vault" — multi-vault support can be added later
+    let vault_items = vec![
+        ListItem::new(Line::from(vec![
+            Span::styled("  My Vault", Style::default().fg(Color::White)),
+            Span::styled(format!("  {}", app.items.len()), Style::default().fg(COLOR_DIM)),
+        ])),
+    ];
+    let vaults_title_style = Style::default().fg(COLOR_DIM);
+    let vaults_list = List::new(vault_items)
         .block(
             Block::default()
                 .borders(Borders::ALL)
                 .border_type(BorderType::Rounded)
-                .title(" Vault "),
+                .title(Span::styled("─[1] Vaults", vaults_title_style)),
+        )
+        .highlight_style(Style::default().bg(COLOR_SELECTED_BG).fg(Color::White));
+    let mut vault_state = ListState::default();
+    vault_state.select(Some(0));
+    frame.render_stateful_widget(vaults_list, sidebar[0], &mut vault_state);
+
+    // ── [2] Items filter panel ────────────────────────────────────────────
+    let items_focused = app.focus == Focus::Items;
+    let items_title_style = if items_focused {
+        Style::default().fg(COLOR_ACCENT)
+    } else {
+        Style::default().fg(COLOR_DIM)
+    };
+
+    let filter_list_items: Vec<ListItem> = ITEM_FILTERS.iter().map(|f| {
+        let count = app.count_for(f);
+        let type_color = match f {
+            ItemFilter::Login      => Color::Blue,
+            ItemFilter::Card       => Color::Magenta,
+            ItemFilter::Identity   => Color::Yellow,
+            ItemFilter::SecureNote => Color::Green,
+            ItemFilter::SshKey     => Color::Rgb(160, 96, 224),
+            ItemFilter::Favorites  => Color::Rgb(255, 200, 0),
+            ItemFilter::All        => Color::White,
+        };
+        let is_active = *f == app.active_filter;
+        let label_style = if is_active {
+            Style::default().fg(type_color).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(type_color)
+        };
+        ListItem::new(Line::from(vec![
+            Span::styled(format!("  {}", f.label()), label_style),
+            Span::styled(format!("  {count}"), Style::default().fg(COLOR_DIM)),
+        ]))
+    }).collect();
+
+    let filter_list = List::new(filter_list_items)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .title(Span::styled("─[2] Items", items_title_style)),
         )
         .highlight_style(
-            Style::default()
-                .bg(COLOR_SELECTED_BG)
-                .fg(Color::White)
-                .add_modifier(Modifier::BOLD),
+            Style::default().bg(COLOR_SELECTED_BG).fg(Color::White)
         )
         .highlight_symbol("▶ ");
 
-    frame.render_stateful_widget(list, chunks[1], &mut list_state);
+    let mut filter_state = ListState::default();
+    filter_state.select(Some(app.filter_selected));
+    frame.render_stateful_widget(filter_list, sidebar[1], &mut filter_state);
 
-    draw_status_bar(frame, app, chunks[2]);
+    // ── Main item list ────────────────────────────────────────────────────
+    let list_focused = app.focus == Focus::List;
+    let list_title_style = if list_focused {
+        Style::default().fg(COLOR_ACCENT)
+    } else {
+        Style::default().fg(COLOR_DIM)
+    };
+
+    let filtered = app.filtered_items();
+    let list_items: Vec<ListItem> = filtered.iter().map(|item| {
+        let type_color = match item.item_type {
+            1 => Color::Blue,
+            2 => Color::Yellow,
+            3 => Color::Magenta,
+            4 => Color::Yellow,
+            5 => Color::Rgb(160, 96, 224),
+            _ => COLOR_DIM,
+        };
+        let mut spans = vec![
+            Span::styled(
+                format!("[{}]  ", item_type_label(item.item_type)),
+                Style::default().fg(type_color),
+            ),
+            Span::raw(item.name.as_str()),
+        ];
+        if let Some(login) = &item.login {
+            if let Some(user) = &login.username {
+                spans.push(Span::styled(format!("  {user}"), Style::default().fg(COLOR_DIM)));
+            }
+        }
+        ListItem::new(Line::from(spans))
+    }).collect();
+
+    let mut list_state = ListState::default();
+    list_state.select(if filtered.is_empty() { None } else { Some(app.selected_index) });
+
+    let main_list = List::new(list_items)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .title(Span::styled(" Vault ", list_title_style)),
+        )
+        .highlight_style(
+            Style::default().bg(COLOR_SELECTED_BG).fg(Color::White).add_modifier(Modifier::BOLD),
+        )
+        .highlight_symbol("▶ ");
+
+    frame.render_stateful_widget(main_list, body[1], &mut list_state);
+
+    draw_status_bar(frame, app, outer[2]);
 }
 
 // ── Detail screen ──────────────────────────────────────────────────────────
@@ -288,9 +371,9 @@ fn draw_detail(frame: &mut Frame, app: &App) {
     let area = frame.area();
 
     let chunks = Layout::vertical([
-        Constraint::Length(3),
+        Constraint::Length(2),
         Constraint::Min(0),
-        Constraint::Length(3),
+        Constraint::Length(2),
     ])
     .split(area);
 
@@ -501,7 +584,7 @@ fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
         None => {
             let hint = match app.screen {
                 Screen::Login  => "Tab: switch  |  Enter: login  |  Ctrl+C: quit",
-                Screen::Vault  => "j/k: navigate  |  Enter: detail  |  /: search  |  c: copy  |  ?: help",
+                Screen::Vault  => "Tab: switch panel  |  j/k: navigate  |  Enter: detail  |  /: search  |  c: copy  |  ?: help",
                 Screen::Detail => "p: password  |  c: copy  |  Esc: back",
                 Screen::Search => "Type to search  |  Enter: open  |  Esc: back",
                 Screen::Help   => "Any key to close",
