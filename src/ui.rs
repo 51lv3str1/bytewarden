@@ -43,7 +43,6 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         Screen::Login  => draw_login(frame, app),
         Screen::Vault  => draw_vault(frame, app),
         Screen::Detail => draw_detail(frame, app),
-        Screen::Search => draw_vault(frame, app), // search is inline in vault now
         Screen::Help   => {
             draw_vault(frame, app);
             draw_help_popup(frame, frame.area());
@@ -656,26 +655,14 @@ fn build_detail_fields(item: &crate::bw::Item, show: bool, reveal_idx: usize) ->
                 }
             }
         }
-        let mut name_parts: Vec<&str> = Vec::new();
-        for p in [id.title.as_deref(), id.first_name.as_deref(), id.middle_name.as_deref(), id.last_name.as_deref()] {
-            if let Some(s) = p { if !s.is_empty() { name_parts.push(s); } }
-        }
-        let full_name = name_parts.join(" ");
+        let full_name = crate::app::build_full_name(id.title.as_deref(), id.first_name.as_deref(), id.middle_name.as_deref(), id.last_name.as_deref());
         if !full_name.is_empty() {
             fields.push(DetailField { label: "Full Name".into(), value: full_name, hidden: false });
         }
-        id_push(&mut fields, "Email",     &id.email,       false, show, reveal_idx);
-        id_push(&mut fields, "Phone",     &id.phone,       false, show, reveal_idx);
-        id_push(&mut fields, "Company",   &id.company,     false, show, reveal_idx);
-        id_push(&mut fields, "Address",   &id.address1,    false, show, reveal_idx);
-        id_push(&mut fields, "Address 2", &id.address2, false, show, reveal_idx);
-        id_push(&mut fields, "City",      &id.city,        false, show, reveal_idx);
-        id_push(&mut fields, "State",     &id.state,       false, show, reveal_idx);
-        id_push(&mut fields, "ZIP",       &id.postal_code, false, show, reveal_idx);
-        id_push(&mut fields, "Country",   &id.country,     false, show, reveal_idx);
-        id_push(&mut fields, "SSN",       &id.ssn,         true, show, reveal_idx);
-        id_push(&mut fields, "Passport",  &id.passport,    true, show, reveal_idx);
-        id_push(&mut fields, "License",   &id.license,     true, show, reveal_idx);
+        let hidden_fields = ["SSN", "Passport", "License"];
+        for (lbl, val) in crate::app::identity_fields(id) {
+            id_push(&mut fields, lbl, val, hidden_fields.contains(&lbl), show, reveal_idx);
+        }
     }
 
     // ── Custom fields (field_type: 0=text, 1=hidden, 2=boolean) ──────────
@@ -899,7 +886,6 @@ fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
                 Screen::Login  => "Tab: switch  |  Enter: login  |  Ctrl+C: quit",
                 Screen::Vault  => "Tab: switch panel  |  j/k: navigate  |  Enter: detail  |  u: copy user  |  c: copy pass  |  ?: help",
                 Screen::Detail => "p: password  |  c: copy  |  Esc: back",
-                Screen::Search => "Search is now inline — press / from vault",
                 Screen::Help   => "Any key to close",
             };
             (hint.to_string(), t.dim)

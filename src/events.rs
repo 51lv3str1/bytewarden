@@ -16,7 +16,7 @@ pub fn handle_events(app: &mut App) -> std::io::Result<()> {
                 Screen::Login  => handle_login(app, key),
                 Screen::Vault  => handle_vault(app, key),
                 Screen::Detail => handle_detail(app, key),
-                Screen::Search => {}
+                // Screen::Search removed — search is inline in vault
                 Screen::Help   => { app.go_back(); }
             }
         }
