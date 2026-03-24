@@ -24,11 +24,16 @@ pub struct Item {
     #[serde(rename = "type")]
     pub item_type: u8,
     pub login: Option<LoginData>,
+    pub card: Option<CardData>,
+    pub identity: Option<IdentityData>,
     pub notes: Option<String>,
     #[serde(rename = "folderId")]
     pub folder_id: Option<String>,
     #[serde(default)]
     pub favorite: bool,
+    /// Custom fields added by the user in the Bitwarden UI
+    #[serde(default)]
+    pub fields: Vec<Field>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -42,6 +47,57 @@ pub struct LoginData {
 #[derive(Debug, Clone, Deserialize)]
 pub struct UriData {
     pub uri: Option<String>,
+}
+
+/// Custom field. type: 0=text, 1=hidden, 2=boolean, 3=linked
+#[derive(Debug, Clone, Deserialize)]
+pub struct Field {
+    pub name:  Option<String>,
+    pub value: Option<String>,
+    #[serde(rename = "type")]
+    pub field_type: u8,  // 0=text, 1=hidden, 2=boolean
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[allow(dead_code)]
+pub struct CardData {
+    #[serde(rename = "cardholderName")]
+    pub cardholder_name: Option<String>,
+    pub brand:      Option<String>,
+    pub number:     Option<String>,
+    #[serde(rename = "expMonth")]
+    pub exp_month:  Option<String>,
+    #[serde(rename = "expYear")]
+    pub exp_year:   Option<String>,
+    pub code:       Option<String>,  // CVV — hidden
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[allow(dead_code)]
+pub struct IdentityData {
+    pub title:          Option<String>,
+    #[serde(rename = "firstName")]
+    pub first_name:     Option<String>,
+    #[serde(rename = "middleName")]
+    pub middle_name:    Option<String>,
+    #[serde(rename = "lastName")]
+    pub last_name:      Option<String>,
+    pub email:          Option<String>,
+    pub phone:          Option<String>,
+    pub company:        Option<String>,
+    #[serde(rename = "ssn")]
+    pub ssn:            Option<String>,  // hidden
+    #[serde(rename = "passportNumber")]
+    pub passport:       Option<String>,  // hidden
+    #[serde(rename = "licenseNumber")]
+    pub license:        Option<String>,  // hidden
+    pub address1:       Option<String>,
+    pub address2:       Option<String>,
+    pub city:           Option<String>,
+    pub state:          Option<String>,
+    #[serde(rename = "postalCode")]
+    pub postal_code:    Option<String>,
+    pub country:        Option<String>,
 }
 
 // ── BwClient ───────────────────────────────────────────────────────────────

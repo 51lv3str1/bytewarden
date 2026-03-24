@@ -16,7 +16,7 @@ use ratatui::{
     text::{Line, Span},
     widgets::{
         Block, Borders, BorderType, Clear, List, ListItem, ListState,
-        Padding, Paragraph, Wrap,
+        Padding, Paragraph,
     },
 };
 
@@ -564,94 +564,266 @@ fn draw_vault(frame: &mut Frame, app: &App) {
 
 // ── Detail screen ──────────────────────────────────────────────────────────
 
+/// A field to display in the detail view.
+struct DetailField {
+    label:  String,
+    value:  String,
+    hidden: bool, // if true, show ●●● unless revealed
+}
+
+fn build_detail_fields(item: &crate::bw::Item, show: bool, reveal_idx: usize) -> Vec<DetailField> {
+    let mut fields = vec![
+        DetailField { label: "Name".into(), value: item.name.clone(), hidden: false },
+        DetailField { label: "Type".into(), value: item_type_label(item.item_type).to_string(), hidden: false },
+    ];
+
+    // ── Login ─────────────────────────────────────────────────────────────
+    if let Some(login) = &item.login {
+        if let Some(u) = &login.username {
+            fields.push(DetailField { label: "Username".into(), value: u.clone(), hidden: false });
+        }
+        let pass = login.password.as_deref().unwrap_or("").to_string();
+        let reveal = show && reveal_idx == fields.len();
+        fields.push(DetailField {
+            label: "Password".into(),
+            value: if reveal || pass.is_empty() { pass.clone() } else { "●".repeat(pass.chars().count().max(8)) },
+            hidden: !reveal && !pass.is_empty(),
+        });
+        if let Some(uris) = &login.uris {
+            for uri_data in uris {
+                if let Some(uri) = &uri_data.uri {
+                    fields.push(DetailField { label: "URL".into(), value: uri.clone(), hidden: false });
+                }
+            }
+        }
+        if let Some(totp) = &login.totp {
+            let reveal = show && reveal_idx == fields.len();
+            fields.push(DetailField {
+                label: "TOTP".into(),
+                value: if reveal { totp.clone() } else { "●●●●●●".to_string() },
+                hidden: !reveal,
+            });
+        }
+    }
+
+    // ── Card ──────────────────────────────────────────────────────────────
+    if let Some(card) = &item.card {
+        // Helper fn (not closure) avoids double-borrow of fields
+        fn card_push(fields: &mut Vec<DetailField>, label: &str, val: &Option<String>, is_hidden: bool, show: bool, reveal_idx: usize) {
+            if let Some(v) = val {
+                if !v.is_empty() {
+                    let reveal = show && reveal_idx == fields.len();
+                    let hidden = is_hidden && !reveal;
+                    fields.push(DetailField {
+                        label: label.to_string(),
+                        value: if hidden { "●".repeat(v.chars().count().max(4)) } else { v.clone() },
+                        hidden,
+                    });
+                }
+            }
+        }
+        card_push(&mut fields, "Cardholder", &card.cardholder_name, false, show, reveal_idx);
+        card_push(&mut fields, "Brand",      &card.brand,           false, show, reveal_idx);
+        card_push(&mut fields, "Number",     &card.number,          true,  show, reveal_idx);
+        if card.exp_month.is_some() || card.exp_year.is_some() {
+            let exp = format!("{}/{}", card.exp_month.as_deref().unwrap_or("?"), card.exp_year.as_deref().unwrap_or("?"));
+            fields.push(DetailField { label: "Expiry".into(), value: exp, hidden: false });
+        }
+        card_push(&mut fields, "CVV", &card.code, true, show, reveal_idx);
+    }
+
+    // ── Identity ──────────────────────────────────────────────────────────
+    if let Some(id) = &item.identity {
+        fn id_push(fields: &mut Vec<DetailField>, label: &str, val: &Option<String>, is_hidden: bool, show: bool, reveal_idx: usize) {
+            if let Some(v) = val {
+                if !v.is_empty() {
+                    let reveal = show && reveal_idx == fields.len();
+                    let hidden = is_hidden && !reveal;
+                    fields.push(DetailField {
+                        label: label.to_string(),
+                        value: if hidden { "●".repeat(v.chars().count().max(4)) } else { v.clone() },
+                        hidden,
+                    });
+                }
+            }
+        }
+        let mut name_parts: Vec<&str> = Vec::new();
+        for p in [id.title.as_deref(), id.first_name.as_deref(), id.middle_name.as_deref(), id.last_name.as_deref()] {
+            if let Some(s) = p { if !s.is_empty() { name_parts.push(s); } }
+        }
+        let full_name = name_parts.join(" ");
+        if !full_name.is_empty() {
+            fields.push(DetailField { label: "Full Name".into(), value: full_name, hidden: false });
+        }
+        id_push(&mut fields, "Email",     &id.email,       false, show, reveal_idx);
+        id_push(&mut fields, "Phone",     &id.phone,       false, show, reveal_idx);
+        id_push(&mut fields, "Company",   &id.company,     false, show, reveal_idx);
+        id_push(&mut fields, "Address",   &id.address1,    false, show, reveal_idx);
+        id_push(&mut fields, "Address 2", &id.address2, false, show, reveal_idx);
+        id_push(&mut fields, "City",      &id.city,        false, show, reveal_idx);
+        id_push(&mut fields, "State",     &id.state,       false, show, reveal_idx);
+        id_push(&mut fields, "ZIP",       &id.postal_code, false, show, reveal_idx);
+        id_push(&mut fields, "Country",   &id.country,     false, show, reveal_idx);
+        id_push(&mut fields, "SSN",       &id.ssn,         true, show, reveal_idx);
+        id_push(&mut fields, "Passport",  &id.passport,    true, show, reveal_idx);
+        id_push(&mut fields, "License",   &id.license,     true, show, reveal_idx);
+    }
+
+    // ── Custom fields (field_type: 0=text, 1=hidden, 2=boolean) ──────────
+    for field in &item.fields {
+        let name  = field.name.as_deref().unwrap_or("Field").to_string();
+        let value = field.value.as_deref().unwrap_or("").to_string();
+        let is_hidden = field.field_type == 1;
+        let reveal = show && reveal_idx == fields.len();
+        let hidden = is_hidden && !reveal;
+        fields.push(DetailField {
+            label: name,
+            value: if hidden { "●".repeat(value.chars().count().max(4)) } else { value },
+            hidden,
+        });
+    }
+
+    // ── Notes ─────────────────────────────────────────────────────────────
+    if let Some(notes) = &item.notes {
+        if !notes.is_empty() {
+            fields.push(DetailField { label: "Notes".into(), value: notes.clone(), hidden: false });
+        }
+    }
+
+    fields
+}
+
 fn draw_detail(frame: &mut Frame, app: &App) {
     let t = &app.theme;
     let area = frame.area();
 
+    let Some(item) = app.selected_item() else { return; };
+
+    // Layout: header | fields area | command bar
     let chunks = Layout::vertical([
-        Constraint::Length(2),
-        Constraint::Min(0),
-        Constraint::Length(2),
+        Constraint::Length(2),  // header: ← Item name
+        Constraint::Min(0),     // fields
+        Constraint::Length(2),  // command bar
     ])
     .split(area);
 
-    let item_name = app.selected_item().map(|i| i.name.as_str()).unwrap_or("?");
-    let header = Paragraph::new(Line::from(vec![
-        Span::styled(" ← ", Style::default().fg(t.dim)),
-        Span::styled(item_name, Style::default().fg(t.accent).add_modifier(Modifier::BOLD)),
-    ]))
-    .block(
-        Block::default()
-            .borders(Borders::BOTTOM)
-            .border_style(Style::default().fg(t.dim)),
+    // ── Header with action feedback right-aligned ─────────────────────────
+    let spinner_frames = ["-", "\\", "|", "/"];
+    let spinner_idx = (app.action_tick / 3) as usize % spinner_frames.len();
+    let (action_text, action_style) = match &app.action_state {
+        crate::app::ActionState::Idle => (String::new(), Style::default()),
+        crate::app::ActionState::Running(msg) => (
+            format!("{} {}", spinner_frames[spinner_idx], msg),
+            Style::default().fg(t.accent).add_modifier(Modifier::BOLD),
+        ),
+        crate::app::ActionState::Done(msg) => (
+            format!("✓ {}", msg),
+            Style::default().fg(t.success).add_modifier(Modifier::BOLD),
+        ),
+        crate::app::ActionState::Error(msg) => (
+            format!("✕ {}", msg),
+            Style::default().fg(t.error).add_modifier(Modifier::BOLD),
+        ),
+    };
+
+    // Right-pad action text to fill remaining width
+    let left_len = 4 + item.name.len() + 4 + item_type_label(item.item_type).len(); // " ← name  [Type]"
+    let right_len = action_text.len();
+    let pad = (area.width as usize).saturating_sub(left_len + right_len + 2);
+    let padded_action = format!("{:>width$}", action_text, width = right_len + pad);
+
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled(" ← ", Style::default().fg(t.dim)),
+            Span::styled(item.name.as_str(), Style::default().fg(t.accent).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                format!("  [{}]", item_type_label(item.item_type)),
+                Style::default().fg(t.inactive),
+            ),
+            Span::styled(padded_action, action_style),
+        ]))
+        .block(Block::default().borders(Borders::BOTTOM).border_style(Style::default().fg(t.inactive))),
+        chunks[0],
     );
-    frame.render_widget(header, chunks[0]);
 
-    if let Some(item) = app.selected_item() {
-        let mut lines: Vec<Line> = vec![
-            Line::from(""),
-            detail_row("Name", &item.name),
-            detail_row("Type", item_type_label(item.item_type)),
-        ];
+    // ── Fields ────────────────────────────────────────────────────────────
+    let fields = build_detail_fields(item, app.show_password, app.detail_field);
+    let field_count = fields.len();
+    let selected = app.detail_field.min(field_count.saturating_sub(1));
 
-        if let Some(login) = &item.login {
-            if let Some(username) = &login.username {
-                lines.push(detail_row("Username", username));
-            }
+    // Each field = label row (1) + input box (3) = 4 rows
+    let field_height: u16 = 4;
+    let constraints: Vec<Constraint> = (0..field_count)
+        .map(|_| Constraint::Length(field_height))
+        .collect();
 
-            // Password row — toggled by `p`
-            let pass_text = if app.show_password {
-                login.password.as_deref().unwrap_or("[no password]").to_string()
-            } else {
-                "●●●●●●●●".to_string()
-            };
-            lines.push(Line::from(vec![
-                Span::styled("  Password   : ", Style::default().fg(t.dim)),
-                Span::styled(pass_text, Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
-                Span::styled(
-                    if app.show_password { " (visible)" } else { " (hidden)" },
-                    Style::default().fg(t.dim),
-                ),
-            ]));
+    let field_areas = Layout::vertical(constraints).split(chunks[1]);
 
-            if let Some(uris) = &login.uris {
-                for uri_data in uris {
-                    if let Some(uri) = &uri_data.uri {
-                        lines.push(detail_row("URL", uri));
-                    }
-                }
-            }
+    for (i, field) in fields.iter().enumerate() {
+        if i >= field_areas.len() { break; }
+        let fa = field_areas[i];
+        // Split: label (1 row) | box (3 rows)
+        let fc = Layout::vertical([Constraint::Length(1), Constraint::Length(3)]).split(fa);
 
-            if login.totp.is_some() {
-                lines.push(detail_row("TOTP", "available"));
-            }
-        }
+        let is_selected = i == selected;
+        let border_style = if is_selected {
+            Style::default().fg(t.accent)
+        } else {
+            Style::default().fg(t.inactive)
+        };
+        let label_style = if is_selected {
+            Style::default().fg(t.accent)
+        } else {
+            Style::default().fg(t.inactive)
+        };
 
-        if let Some(notes) = &item.notes {
-            lines.push(Line::from(""));
-            lines.push(detail_row("Notes", notes));
-        }
-
-        lines.push(Line::from(""));
-        lines.push(Line::from(Span::styled(
-            "  p: show/hide password  |  c: copy password  |  Esc: back",
-            Style::default().fg(t.dim),
-        )));
-
+        // Label
+        let label_suffix = if field.hidden && is_selected {
+            "  (p: reveal)"
+        } else if !field.hidden && is_selected && i == app.detail_field {
+            ""
+        } else {
+            ""
+        };
         frame.render_widget(
-            Paragraph::new(lines)
-                .block(
-                    Block::default()
-                        .borders(Borders::ALL)
-                        .border_type(BorderType::Rounded)
-                        .title(" Detail "),
-                )
-                .wrap(Wrap { trim: true }),
-            chunks[1],
+            Paragraph::new(Line::from(vec![
+                Span::styled(format!(" {}", field.label), label_style),
+                Span::styled(label_suffix, Style::default().fg(t.dim)),
+            ])),
+            fc[0],
+        );
+
+        // Value box
+        let value_line = if is_selected {
+            Line::from(vec![
+                Span::styled(field.value.as_str(), Style::default().fg(Color::White)),
+            ])
+        } else {
+            Line::from(Span::styled(field.value.as_str(), Style::default().fg(t.inactive)))
+        };
+        frame.render_widget(
+            Paragraph::new(value_line)
+                .block(Block::default().borders(Borders::ALL)
+                    .border_type(BorderType::Rounded)
+                    .border_style(border_style)),
+            fc[1],
         );
     }
 
-    draw_status_bar(frame, app, chunks[2]);
+    // ── Command bar ───────────────────────────────────────────────────────
+    let hints_full  = "j/k: field  |  p: show/hide  |  c: copy field  |  Esc: back";
+    let hints_short = "j/k:field  p:reveal  c:copy  Esc:back";
+    let avail = area.width.saturating_sub(2) as usize;
+    let hint = if hints_full.len() <= avail { hints_full }
+               else if hints_short.len() <= avail { hints_short }
+               else { &hints_short[..avail.saturating_sub(1)] };
+    frame.render_widget(
+        Paragraph::new(format!(" {hint}"))
+            .style(Style::default().fg(t.dim))
+            .block(Block::default().borders(Borders::TOP)
+                .border_style(Style::default().fg(Color::Rgb(60, 62, 80)))),
+        chunks[2],
+    );
 }
 // ── Help popup ─────────────────────────────────────────────────────────────
 
@@ -702,6 +874,7 @@ fn draw_help_popup(frame: &mut Frame, area: Rect) {
 
 // ── Status bar ─────────────────────────────────────────────────────────────
 
+#[allow(dead_code)]
 fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
     let t = &app.theme;
     let (text, color) = match &app.status {
@@ -769,6 +942,7 @@ fn border_style_themed(focused: bool, accent: Color) -> Style {
 }
 
 /// A label:value row for the detail screen.
+#[allow(dead_code)]
 fn detail_row<'a>(label: &'a str, value: &'a str) -> Line<'a> {
     Line::from(vec![
         Span::styled(format!("  {label:<12}: "), Style::default().fg(COLOR_DIM)),

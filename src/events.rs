@@ -162,14 +162,24 @@ fn handle_vault(app: &mut App, key: KeyEvent) {
 
 fn handle_detail(app: &mut App, key: KeyEvent) {
     app.clear_status();
+    let field_count = app.detail_field_count();
+
     match key.code {
-        KeyCode::Esc | KeyCode::Char('h') => app.go_back(),
-        KeyCode::Char('p')                => app.show_password = !app.show_password,
-        KeyCode::Char('c')                => app.copy_password_to_clipboard(),
-        KeyCode::Char('j') | KeyCode::Down  => { app.show_password = false; app.move_down(); }
-        KeyCode::Char('k') | KeyCode::Up    => { app.show_password = false; app.move_up(); }
-        KeyCode::PageDown                   => { app.show_password = false; app.move_down_page(); }
-        KeyCode::PageUp                     => { app.show_password = false; app.move_up_page(); }
+        KeyCode::Esc | KeyCode::Char('h') => {
+            app.show_password = false;
+            app.detail_field = 0;
+            app.go_back();
+        }
+        KeyCode::Char('j') | KeyCode::Down | KeyCode::PageDown => {
+            app.show_password = false; // hide when moving away
+            if app.detail_field + 1 < field_count { app.detail_field += 1; }
+        }
+        KeyCode::Char('k') | KeyCode::Up | KeyCode::PageUp => {
+            app.show_password = false;
+            if app.detail_field > 0 { app.detail_field -= 1; }
+        }
+        KeyCode::Char('p') => app.show_password = !app.show_password,
+        KeyCode::Char('c') => app.copy_selected_field(),
         _ => {}
     }
 }

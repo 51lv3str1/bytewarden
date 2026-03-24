@@ -108,6 +108,7 @@ pub struct App {
 
     // ── Detail screen ─────────────────────────────────
     pub show_password: bool,
+    pub detail_field: usize,  // which field is selected in detail view
 
     // ── Status bar ────────────────────────────────────
     pub status: Option<StatusMessage>,
@@ -143,6 +144,8 @@ pub enum PendingAction {
     CopyPassword,
     SyncVault,
     ToggleFavorite,
+    CopyRaw(String, String),  // (text, success_msg) — for plain fields
+    CopyTotp(String),         // item_id — uses bw get totp
 }
 
 /// A single entry in the command log.
@@ -190,6 +193,7 @@ impl App {
             search_results: Vec::new(),
 
             show_password: false,
+            detail_field: 0,
             status: None,
             action_state: ActionState::Idle,
             action_tick: 0,
@@ -428,10 +432,232 @@ impl App {
 
     // ── Clipboard ─────────────────────────────────────────────────────────
 
+    /// Copies the currently selected detail field to clipboard.
+    /// Uses bw CLI for password (secure), raw copy for everything else.
+    /// Returns the total number of fields for the currently selected item.
+    /// Must stay in sync with build_detail_fields() in ui.rs.
+    pub fn detail_field_count(&self) -> usize {
+        let Some(item) = self.selected_item() else { return 0; };
+        let mut n = 2usize; // Name + Type
+
+        if let Some(login) = &item.login {
+            if login.username.is_some() { n += 1; }
+            n += 1; // password
+            if let Some(uris) = &login.uris {
+                n += uris.iter().filter(|u| u.uri.is_some()).count();
+            }
+            if login.totp.is_some() { n += 1; }
+        }
+
+        if let Some(card) = &item.card {
+            if card.cardholder_name.as_ref().map(|v| !v.is_empty()).unwrap_or(false) { n += 1; }
+            if card.brand.as_ref().map(|v| !v.is_empty()).unwrap_or(false) { n += 1; }
+            if card.number.as_ref().map(|v| !v.is_empty()).unwrap_or(false) { n += 1; }
+            if card.exp_month.is_some() || card.exp_year.is_some() { n += 1; } // expiry
+            if card.code.as_ref().map(|v| !v.is_empty()).unwrap_or(false) { n += 1; }
+        }
+
+        if let Some(id) = &item.identity {
+            let full_name_parts = [id.title.as_deref(), id.first_name.as_deref(),
+                                   id.middle_name.as_deref(), id.last_name.as_deref()]
+                .iter().filter(|s| s.map(|x| !x.is_empty()).unwrap_or(false)).count();
+            if full_name_parts > 0 { n += 1; }
+            for val in [&id.email, &id.phone, &id.company, &id.address1, &id.address2,
+                        &id.city, &id.state, &id.postal_code, &id.country,
+                        &id.ssn, &id.passport, &id.license] {
+                if val.as_ref().map(|v| !v.is_empty()).unwrap_or(false) { n += 1; }
+            }
+        }
+
+        // Custom fields
+        n += item.fields.iter()
+            .filter(|f| f.value.as_ref().map(|v| !v.is_empty()).unwrap_or(false))
+            .count();
+
+        if item.notes.as_ref().map(|s| !s.is_empty()).unwrap_or(false) { n += 1; }
+
+        n
+    }
+
+    pub fn copy_selected_field(&mut self) {
+        let item = match self.selected_item() {
+            Some(i) => i.clone(),
+            None => return,
+        };
+        let item = &item;
+        {
+            let item_id = item.id.clone();
+            let mut idx = 0usize;
+
+            // Name
+            if self.detail_field == idx {
+                let v = item.name.clone();
+                self.set_action(ActionState::Running("Copying…".to_string()));
+                self.pending_action = PendingAction::CopyRaw(v, "Name copied ✓".to_string());
+                return;
+            }
+            idx += 1;
+            // Type — not useful to copy, skip silently
+            if self.detail_field == idx { return; }
+            idx += 1;
+
+            // Login fields
+            if let Some(login) = item.login.as_ref() {
+                if login.username.is_some() {
+                    if self.detail_field == idx { self.copy_username_to_clipboard(); return; }
+                    idx += 1;
+                }
+                if self.detail_field == idx { self.copy_password_to_clipboard(); return; }
+                idx += 1;
+                for uri_data in login.uris.iter().flat_map(|u| u.iter()) {
+                    if let Some(uri) = &uri_data.uri {
+                        if self.detail_field == idx {
+                            let v = uri.clone();
+                            self.set_action(ActionState::Running("Copying…".to_string()));
+                            self.pending_action = PendingAction::CopyRaw(v, "URL copied ✓".to_string());
+                            return;
+                        }
+                        idx += 1;
+                    }
+                }
+                if login.totp.is_some() {
+                    if self.detail_field == idx {
+                        self.set_action(ActionState::Running("Copying TOTP…".to_string()));
+                        self.pending_action = PendingAction::CopyTotp(item_id);
+                        return;
+                    }
+                    idx += 1;
+                }
+            }
+
+            // Card fields — copy raw plaintext
+            if let Some(card) = item.card.as_ref() {
+                for (val, lbl) in [
+                    (card.cardholder_name.as_deref(), "Cardholder"),
+                    (card.brand.as_deref(), "Brand"),
+                    (card.number.as_deref(), "Number"),
+                ] {
+                    if let Some(v) = val {
+                        if !v.is_empty() {
+                            if self.detail_field == idx {
+                                self.set_action(ActionState::Running("Copying…".to_string()));
+                                self.pending_action = PendingAction::CopyRaw(v.to_string(), format!("{lbl} copied ✓"));
+                                return;
+                            }
+                            idx += 1;
+                        }
+                    }
+                }
+                if card.exp_month.is_some() || card.exp_year.is_some() {
+                    if self.detail_field == idx {
+                        let v = format!("{}/{}", card.exp_month.as_deref().unwrap_or("?"), card.exp_year.as_deref().unwrap_or("?"));
+                        self.set_action(ActionState::Running("Copying…".to_string()));
+                        self.pending_action = PendingAction::CopyRaw(v, "Expiry copied ✓".to_string());
+                        return;
+                    }
+                    idx += 1;
+                }
+                if let Some(v) = card.code.as_deref() {
+                    if !v.is_empty() {
+                        if self.detail_field == idx {
+                            self.set_action(ActionState::Running("Copying…".to_string()));
+                            self.pending_action = PendingAction::CopyRaw(v.to_string(), "CVV copied ✓".to_string());
+                            return;
+                        }
+                        idx += 1;
+                    }
+                }
+            }
+
+            // Identity — copy any non-empty field
+            if let Some(id) = item.identity.as_ref() {
+                let id_vals: Vec<(&str, &Option<String>)> = vec![
+                    ("Full Name", &None), // handled specially below
+                    ("Email",    &id.email),    ("Phone",   &id.phone),
+                    ("Company",  &id.company),  ("Address", &id.address1),
+                    ("Address2", &id.address2), ("City",    &id.city),
+                    ("State",    &id.state),    ("ZIP",     &id.postal_code),
+                    ("Country",  &id.country),  ("SSN",     &id.ssn),
+                    ("Passport", &id.passport), ("License", &id.license),
+                ];
+                // Full name
+                let mut _name_parts: Vec<&str> = Vec::new();
+                for p in [id.title.as_deref(), id.first_name.as_deref(), id.middle_name.as_deref(), id.last_name.as_deref()] {
+                    if let Some(s) = p { if !s.is_empty() { _name_parts.push(s); } }
+                }
+                let full_name = _name_parts.join(" ");
+                if !full_name.is_empty() {
+                    if self.detail_field == idx {
+                        self.set_action(ActionState::Running("Copying…".to_string()));
+                        self.pending_action = PendingAction::CopyRaw(full_name, "Name copied ✓".to_string());
+                        return;
+                    }
+                    idx += 1;
+                }
+                for (label, val) in id_vals.iter().skip(1) {
+                    if let Some(v) = val.as_deref() {
+                        if !v.is_empty() {
+                            if self.detail_field == idx {
+                                let v = v.to_string();
+                                let lbl = label.to_string();
+                                self.set_action(ActionState::Running("Copying…".to_string()));
+                                self.pending_action = PendingAction::CopyRaw(v, format!("{lbl} copied ✓"));
+                                return;
+                            }
+                            idx += 1;
+                        }
+                    }
+                }
+            }
+
+            // Custom fields
+            for field in &item.fields {
+                let value = field.value.as_deref().unwrap_or("").to_string();
+                let label = field.name.as_deref().unwrap_or("Field").to_string();
+                if self.detail_field == idx {
+                    self.set_action(ActionState::Running("Copying…".to_string()));
+                    self.pending_action = PendingAction::CopyRaw(value, format!("{label} copied ✓"));
+                    return;
+                }
+                idx += 1;
+            }
+
+            // Notes
+            if let Some(notes) = &item.notes {
+                if !notes.is_empty() && self.detail_field == idx {
+                    let v = notes.clone();
+                    self.set_action(ActionState::Running("Copying…".to_string()));
+                    self.pending_action = PendingAction::CopyRaw(v, "Notes copied ✓".to_string());
+                }
+            }
+        }
+    }
+
     pub fn copy_username_to_clipboard(&mut self) {
         if self.selected_item().is_some() {
             self.set_action(ActionState::Running("Copying user…".to_string()));
             self.pending_action = PendingAction::CopyUsername;
+        }
+    }
+
+    pub fn do_copy_raw(&mut self, text: String, success_msg: String) {
+        self.set_action(ActionState::Done("Copied ✓".to_string()));
+        self.push_cmd("clipboard", true, &success_msg);
+        self.write_clipboard(text, &success_msg);
+    }
+
+    pub fn do_copy_totp(&mut self, item_id: String) {
+        let cmd = format!("bw get totp {} --session {}", item_id, self.bw.session_key.as_deref().unwrap_or("***"));
+        match self.bw.get_totp(&item_id) {
+            Ok(totp) => {
+                self.set_action(ActionState::Done("TOTP copied ✓".to_string()));
+                self.push_cmd(&cmd, true, "totp code [hidden]");
+                self.write_clipboard(totp, "TOTP copied ✓");
+            }
+            Err(e) => {
+                self.set_action(ActionState::Error("Failed".to_string()));
+                self.push_cmd(&cmd, false, &e);
+            }
         }
     }
 

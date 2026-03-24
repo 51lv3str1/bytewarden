@@ -28,11 +28,13 @@ fn main() -> Result<()> {
                 let pending = app.pending_action.clone();
                 app.pending_action = PendingAction::None;
                 match pending {
-                    PendingAction::CopyUsername   => app.do_copy_username(),
-                    PendingAction::CopyPassword   => app.do_copy_password(),
-                    PendingAction::SyncVault      => app.do_sync_vault(),
-                    PendingAction::ToggleFavorite => app.do_toggle_favorite(),
-                    PendingAction::None           => {}
+                    PendingAction::CopyUsername              => app.do_copy_username(),
+                    PendingAction::CopyPassword              => app.do_copy_password(),
+                    PendingAction::SyncVault                 => app.do_sync_vault(),
+                    PendingAction::ToggleFavorite            => app.do_toggle_favorite(),
+                    PendingAction::CopyRaw(text, msg)        => app.do_copy_raw(text, msg),
+                    PendingAction::CopyTotp(item_id)         => app.do_copy_totp(item_id),
+                    PendingAction::None                      => {}
                 }
                 done_ticks = 0;
                 // Re-render immediately to show Done/Error state
