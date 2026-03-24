@@ -38,7 +38,7 @@ const COLOR_SELECTED_BG: Color = Color::Rgb(30, 60, 80);
 // ── Root render function ───────────────────────────────────────────────────
 
 /// Entry point — called from the main loop on every frame.
-pub fn draw(frame: &mut Frame, app: &App) {
+pub fn draw(frame: &mut Frame, app: &mut App) {
     match app.screen {
         Screen::Login  => draw_login(frame, app),
         Screen::Vault  => draw_vault(frame, app),
@@ -53,7 +53,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
 
 // ── Login screen ───────────────────────────────────────────────────────────
 
-fn draw_login(frame: &mut Frame, app: &App) {
+fn draw_login(frame: &mut Frame, app: &mut App) {
     let t = &app.theme;
     let area = frame.area();
 
@@ -241,6 +241,9 @@ fn draw_login(frame: &mut Frame, app: &App) {
         );
     }
 
+    // Record login form area for mouse hit-testing
+    app.mouse_areas.login = Some(form_area);
+
     // ── Status bar with truncation ────────────────────────────────────────
     let hints_full  = "Tab: field  |  Space: toggle save  |  Enter: login  |  ←→: cursor  |  Ctrl+C: quit";
     let hints_short = "Tab:field  Space:save  Enter:login  ←→:cursor  ^C:quit";
@@ -263,7 +266,7 @@ fn draw_login(frame: &mut Frame, app: &App) {
 
 // ── Vault screen ───────────────────────────────────────────────────────────
 
-fn draw_vault(frame: &mut Frame, app: &App) {
+fn draw_vault(frame: &mut Frame, app: &mut App) {
     use crate::app::{Focus, ITEM_FILTERS, ItemFilter};
     let t = &app.theme;
 
@@ -559,8 +562,14 @@ fn draw_vault(frame: &mut Frame, app: &App) {
                 .border_style(if log_focused { Style::default().fg(t.accent) } else { Style::default().fg(t.inactive) })),
         main[2],
     );
+    // ── Record mouse hit areas (safe — draw_vault takes &mut App) ────────
+    app.mouse_areas.status  = Some(sidebar[0]);
+    app.mouse_areas.vaults  = Some(sidebar[1]);
+    app.mouse_areas.items   = Some(sidebar[2]);
+    app.mouse_areas.search  = Some(main[0]);
+    app.mouse_areas.list    = Some(main[1]);
+    app.mouse_areas.cmdlog  = Some(main[2]);
 }
-
 
 // ── Detail screen ──────────────────────────────────────────────────────────
 
@@ -693,7 +702,7 @@ fn build_detail_fields(item: &crate::bw::Item, show: bool, reveal_idx: usize) ->
     fields
 }
 
-fn draw_detail(frame: &mut Frame, app: &App) {
+fn draw_detail(frame: &mut Frame, app: &mut App) {
     let t = &app.theme;
     let area = frame.area();
 
@@ -758,6 +767,9 @@ fn draw_detail(frame: &mut Frame, app: &App) {
         .collect();
 
     let field_areas = Layout::vertical(constraints).split(chunks[1]);
+
+    // Record the fields area for mouse hit-testing
+    app.mouse_areas.detail = Some(chunks[1]);
 
     for (i, field) in fields.iter().enumerate() {
         if i >= field_areas.len() { break; }

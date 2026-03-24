@@ -1,24 +1,27 @@
 /// events.rs — Keyboard event handling
 
 use crate::app::{App, Focus, LoginField, Screen};
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers,
+                        MouseEvent, MouseEventKind, MouseButton};
 
 pub fn handle_events(app: &mut App) -> std::io::Result<()> {
-    if let Event::Key(key) = event::read()? {
-        if key.kind != KeyEventKind::Press {
-            return Ok(());
+    match event::read()? {
+        Event::Key(key) => {
+            if key.kind != KeyEventKind::Press { return Ok(()); }
+            if key.code == KeyCode::Char('c') && key.modifiers == KeyModifiers::CONTROL {
+                app.should_quit = true;
+                return Ok(());
+            }
+            match app.screen.clone() {
+                Screen::Login  => handle_login(app, key),
+                Screen::Vault  => handle_vault(app, key),
+                Screen::Detail => handle_detail(app, key),
+                Screen::Search => {}
+                Screen::Help   => { app.go_back(); }
+            }
         }
-        if key.code == KeyCode::Char('c') && key.modifiers == KeyModifiers::CONTROL {
-            app.should_quit = true;
-            return Ok(());
-        }
-        match app.screen.clone() {
-            Screen::Login  => handle_login(app, key),
-            Screen::Vault  => handle_vault(app, key),
-            Screen::Detail => handle_detail(app, key),
-            Screen::Search => {}
-            Screen::Help   => { app.go_back(); }
-        }
+        Event::Mouse(mouse) => handle_mouse(app, mouse),
+        _ => {}
     }
     Ok(())
 }
@@ -180,6 +183,139 @@ fn handle_detail(app: &mut App, key: KeyEvent) {
         }
         KeyCode::Char('p') => app.show_password = !app.show_password,
         KeyCode::Char('c') => app.copy_selected_field(),
+        _ => {}
+    }
+}
+
+fn handle_mouse(app: &mut App, mouse: MouseEvent) {
+    let col = mouse.column;
+    let row = mouse.row;
+
+    match mouse.kind {
+        // ── Click ─────────────────────────────────────────────────────────
+        MouseEventKind::Down(MouseButton::Left) => {
+            app.last_click = Some((col, row));
+
+            // ── Login screen ──────────────────────────────────────────────
+            if app.screen == Screen::Login {
+                if let Some(form) = app.mouse_areas.login {
+                    if col >= form.x && col < form.x + form.width
+                       && row >= form.y && row < form.y + form.height {
+                        let inner_row = row.saturating_sub(form.y + 1);
+                        use crate::app::LoginField;
+                        // email: rows 1-4, password: rows 5-8, checkbox: row 9+
+                        if inner_row < 4 {
+                            app.active_field = LoginField::Email;
+                        } else if inner_row < 8 {
+                            app.active_field = LoginField::Password;
+                        } else {
+                            app.active_field = LoginField::SaveEmail;
+                            // Clicking checkbox toggles it immediately
+                            app.toggle_save_email();
+                        }
+                    }
+                }
+            }
+
+            // ── Vault screen ──────────────────────────────────────────────
+            if app.screen == Screen::Vault {
+                if let Some(focus) = app.mouse_areas.focus_for(col, row) {
+                    app.focus = focus.clone();
+
+                    // List: click selects; second click on same row opens detail
+                    if focus == Focus::List {
+                        if let Some(row_idx) = app.mouse_areas.list_row(row) {
+                            let visible_idx = app.scroll_offset + row_idx;
+                            if visible_idx < app.filtered_items().len() {
+                                if app.selected_index == visible_idx {
+                                    app.go_to_detail();
+                                } else {
+                                    app.selected_index = visible_idx;
+                                }
+                            }
+                        }
+                    }
+
+                    // Items filter: click highlights filter (Enter to apply)
+                    if focus == Focus::Items {
+                        if let Some(row_idx) = app.mouse_areas.items_row(row) {
+                            use crate::app::ITEM_FILTERS;
+                            if row_idx < ITEM_FILTERS.len() {
+                                app.filter_selected = row_idx;
+                                // Apply immediately on click — don't change focus
+                                let filter = ITEM_FILTERS[row_idx].clone();
+                                app.active_filter = filter;
+                                app.selected_index = 0;
+                                app.scroll_offset = 0;
+                                // Keep Items focused so user can click more filters
+                            }
+                        }
+                    }
+                }
+            }
+
+            // ── Detail screen ─────────────────────────────────────────────
+            if app.screen == Screen::Detail {
+                // Click on header (top 2 rows) → go back
+                if row < 2 {
+                    app.show_password = false;
+                    app.detail_field = 0;
+                    app.go_back();
+                    return;
+                }
+                if let Some(detail_area) = app.mouse_areas.detail {
+                    if col >= detail_area.x && col < detail_area.x + detail_area.width
+                       && row >= detail_area.y && row < detail_area.y + detail_area.height {
+                        let rel = row.saturating_sub(detail_area.y);
+                        let field_height = 4u16;
+                        let field_idx = (rel / field_height) as usize;
+                        let total = app.detail_field_count();
+                        if field_idx < total {
+                            if field_idx == app.detail_field {
+                                app.show_password = !app.show_password;
+                            } else {
+                                app.show_password = false;
+                                app.detail_field = field_idx;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // ── Scroll wheel ──────────────────────────────────────────────────
+        MouseEventKind::ScrollDown => {
+            if app.screen == Screen::Vault {
+                match app.mouse_areas.focus_for(col, row) {
+                    Some(Focus::List) | Some(Focus::Search) | None => app.move_down(),
+                    Some(Focus::Items)  => app.filter_move_down(),
+                    Some(Focus::CmdLog) => app.cmd_log_scroll_up(1),
+                    _ => app.move_down(),
+                }
+            } else if app.screen == Screen::Detail {
+                let total = app.detail_field_count();
+                if app.detail_field + 1 < total {
+                    app.show_password = false;
+                    app.detail_field += 1;
+                }
+            }
+        }
+        MouseEventKind::ScrollUp => {
+            if app.screen == Screen::Vault {
+                match app.mouse_areas.focus_for(col, row) {
+                    Some(Focus::List) | Some(Focus::Search) | None => app.move_up(),
+                    Some(Focus::Items)  => app.filter_move_up(),
+                    Some(Focus::CmdLog) => app.cmd_log_scroll_down(1),
+                    _ => app.move_up(),
+                }
+            } else if app.screen == Screen::Detail {
+                if app.detail_field > 0 {
+                    app.show_password = false;
+                    app.detail_field -= 1;
+                }
+            }
+        }
+
         _ => {}
     }
 }

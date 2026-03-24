@@ -123,8 +123,60 @@ pub struct App {
     pub action_tick: u8,        // incremented on each render tick for animation
     pub pending_action: PendingAction, // deferred work — runs after one Running frame
 
+    // ── Mouse hit areas (updated each frame by ui.rs) ─────────────────────
+    pub mouse_areas: MouseAreas,
+    pub last_click: Option<(u16, u16)>, // last mouse down position
+
     pub bw: BwClient,
     pub theme: crate::theme::Theme,
+}
+
+/// Stores the screen areas of each panel for mouse hit-testing.
+/// Updated every frame by ui.rs so clicks are always accurate.
+#[derive(Debug, Clone, Default)]
+pub struct MouseAreas {
+    pub status:  Option<ratatui::layout::Rect>,
+    pub search:  Option<ratatui::layout::Rect>,
+    pub vaults:  Option<ratatui::layout::Rect>,
+    pub items:   Option<ratatui::layout::Rect>,
+    pub list:    Option<ratatui::layout::Rect>,
+    pub cmdlog:  Option<ratatui::layout::Rect>,
+    pub detail:  Option<ratatui::layout::Rect>, // detail screen fields area
+    pub login:   Option<ratatui::layout::Rect>, // login form area
+}
+
+impl MouseAreas {
+    /// Returns the Focus that was clicked, if any.
+    pub fn focus_for(&self, col: u16, row: u16) -> Option<crate::app::Focus> {
+        use crate::app::Focus;
+        if self.status.map(|r| contains(r, col, row)).unwrap_or(false)  { return Some(Focus::Status);  }
+        if self.search.map(|r| contains(r, col, row)).unwrap_or(false)  { return Some(Focus::Search);  }
+        if self.vaults.map(|r| contains(r, col, row)).unwrap_or(false)  { return Some(Focus::Vaults);  }
+        if self.items.map(|r| contains(r, col, row)).unwrap_or(false)   { return Some(Focus::Items);   }
+        if self.list.map(|r| contains(r, col, row)).unwrap_or(false)    { return Some(Focus::List);    }
+        if self.cmdlog.map(|r| contains(r, col, row)).unwrap_or(false)  { return Some(Focus::CmdLog);  }
+        None
+    }
+
+    /// Returns the 0-based list row index clicked within the list area.
+    pub fn list_row(&self, row: u16) -> Option<usize> {
+        let r = self.list?;
+        if row <= r.y + 1 || row >= r.y + r.height { return None; }
+        Some((row - r.y - 1) as usize) // -1 for border
+    }
+
+    /// Returns the 0-based filter row index clicked within the items area.
+    /// Row y+1 = first item (inside rounded border, title is on border line).
+    pub fn items_row(&self, row: u16) -> Option<usize> {
+        let r = self.items?;
+        // y = top border, y+1 = first item row
+        if row < r.y + 1 || row >= r.y + r.height.saturating_sub(1) { return None; }
+        Some((row - r.y - 1) as usize)
+    }
+}
+
+fn contains(r: ratatui::layout::Rect, col: u16, row: u16) -> bool {
+    col >= r.x && col < r.x + r.width && row >= r.y && row < r.y + r.height
 }
 
 /// State of the action status pane.
@@ -198,6 +250,8 @@ impl App {
             action_state: ActionState::Idle,
             action_tick: 0,
             pending_action: PendingAction::None,
+            mouse_areas: MouseAreas::default(),
+            last_click: None,
             cmd_log: Vec::new(),
             cmd_log_scroll: 0,
             bw: BwClient::new(),
