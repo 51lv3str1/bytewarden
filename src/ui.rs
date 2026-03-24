@@ -22,10 +22,17 @@ use ratatui::{
 
 // ── Color palette ──────────────────────────────────────────────────────────
 
+// ── Color palette (used by draw_help_popup which has no app access) ──────────
+
 const COLOR_ACCENT: Color      = Color::Cyan;
+#[allow(dead_code)]
 const COLOR_ERROR: Color       = Color::Red;
+#[allow(dead_code)]
 const COLOR_SUCCESS: Color     = Color::Green;
 const COLOR_DIM: Color         = Color::DarkGray;
+#[allow(dead_code)]
+const COLOR_INACTIVE: Color    = Color::Rgb(140, 140, 160);
+#[allow(dead_code)]
 const COLOR_SELECTED_BG: Color = Color::Rgb(30, 60, 80);
 
 // ── Root render function ───────────────────────────────────────────────────
@@ -36,7 +43,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
         Screen::Login  => draw_login(frame, app),
         Screen::Vault  => draw_vault(frame, app),
         Screen::Detail => draw_detail(frame, app),
-        Screen::Search => draw_search(frame, app),
+        Screen::Search => draw_vault(frame, app), // search is inline in vault now
         Screen::Help   => {
             draw_vault(frame, app);
             draw_help_popup(frame, frame.area());
@@ -47,6 +54,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
 // ── Login screen ───────────────────────────────────────────────────────────
 
 fn draw_login(frame: &mut Frame, app: &App) {
+    let t = &app.theme;
     let area = frame.area();
 
     // Form content: label(1)+input(3)+label(1)+input(3)+checkbox(1) = 9
@@ -87,8 +95,10 @@ fn draw_login(frame: &mut Frame, app: &App) {
     };
 
     // ── ASCII pixel-art shield logo
-    let c  = Style::default().fg(COLOR_ACCENT);
-    let d  = Style::default().fg(Color::Rgb(0, 90, 90));
+    let c  = Style::default().fg(t.accent);
+    // Logo dark inner tone — use selected_bg color (dark, tinted) so it
+    // always harmonizes with the accent regardless of theme
+    let d  = Style::default().fg(t.selected_bg);
     let bg = Style::default().fg(Color::Rgb(0, 25, 25));
 
     if let Some(logo_area) = logo_chunk {
@@ -109,10 +119,10 @@ fn draw_login(frame: &mut Frame, app: &App) {
     // ── Title line — always visible ────────────────────────────────────────
     frame.render_widget(
         Paragraph::new(Line::from(vec![
-            Span::styled("bytewarden", Style::default().fg(COLOR_ACCENT).add_modifier(Modifier::BOLD)),
-            Span::styled(" v0.1.0", Style::default().fg(COLOR_DIM)),
+            Span::styled("bytewarden", Style::default().fg(t.accent).add_modifier(Modifier::BOLD)),
+            Span::styled(" v0.1.0", Style::default().fg(t.dim)),
             Span::styled("  —  ", Style::default().fg(Color::Rgb(40, 44, 70))),
-            Span::styled("Bitwarden TUI", Style::default().fg(COLOR_DIM)),
+            Span::styled("Bitwarden TUI", Style::default().fg(t.dim)),
         ])).alignment(Alignment::Center),
         title_chunk,
     );
@@ -124,7 +134,7 @@ fn draw_login(frame: &mut Frame, app: &App) {
     let form_border_style = if app.login_error {
         Style::default().fg(Color::Red)
     } else {
-        Style::default().fg(COLOR_ACCENT)
+        Style::default().fg(t.accent)
     };
 
     let block = Block::default()
@@ -151,24 +161,24 @@ fn draw_login(frame: &mut Frame, app: &App) {
 
     // ── Email field with inline cursor ────────────────────────────────────
     frame.render_widget(
-        Paragraph::new("Email:").style(Style::default().fg(COLOR_DIM)),
+        Paragraph::new("Email:").style(Style::default().fg(t.dim)),
         fields[0],
     );
     let email_focused = app.active_field == LoginField::Email;
-    let email_line = input_with_cursor(&app.email_input, app.email_cursor, email_focused);
+    let email_line = input_with_cursor(&app.email_input, app.email_cursor, email_focused, t.accent);
     frame.render_widget(
         Paragraph::new(email_line).block(
             Block::default()
                 .borders(Borders::ALL)
                 .border_type(BorderType::Rounded)
-                .border_style(border_style(email_focused)),
+                .border_style(border_style_themed(email_focused, t.accent)),
         ),
         fields[1],
     );
 
     // ── Password field with inline cursor ────────────────────────────────
     frame.render_widget(
-        Paragraph::new("Master Password:").style(Style::default().fg(COLOR_DIM)),
+        Paragraph::new("Master Password:").style(Style::default().fg(t.dim)),
         fields[2],
     );
     let pass_focused = app.active_field == LoginField::Password;
@@ -180,7 +190,7 @@ fn draw_login(frame: &mut Frame, app: &App) {
     let pass_line = if pass_focused {
         Line::from(vec![
             Span::raw(masked_before),
-            Span::styled("█", Style::default().fg(COLOR_ACCENT)),
+            Span::styled("█", Style::default().fg(t.accent)),
             Span::raw(masked_after),
         ])
     } else {
@@ -192,7 +202,7 @@ fn draw_login(frame: &mut Frame, app: &App) {
             Block::default()
                 .borders(Borders::ALL)
                 .border_type(BorderType::Rounded)
-                .border_style(border_style(pass_focused)),
+                .border_style(border_style_themed(pass_focused, t.accent)),
         ),
         fields[3],
     );
@@ -200,17 +210,17 @@ fn draw_login(frame: &mut Frame, app: &App) {
     // ── Save email checkbox ───────────────────────────────────────────────
     let checkbox_focused = app.active_field == crate::app::LoginField::SaveEmail;
     let (checkbox_icon, checkbox_color) = if app.save_email {
-        ("☑", COLOR_SUCCESS)
+        ("☑", t.accent)   // checked → accent (matches theme, not success green)
     } else {
-        ("☐", COLOR_DIM)
+        ("☐", t.inactive) // unchecked → inactive gray
     };
-    let checkbox_label_color = if checkbox_focused { COLOR_ACCENT } else { COLOR_DIM };
+    let checkbox_label_color = if checkbox_focused { t.accent } else { t.inactive };
     frame.render_widget(
         Paragraph::new(Line::from(vec![
             Span::styled(checkbox_icon, Style::default().fg(checkbox_color)),
             Span::styled(" Save email", Style::default().fg(checkbox_label_color)),
             if checkbox_focused {
-                Span::styled("  (Space to toggle)", Style::default().fg(COLOR_DIM))
+                Span::styled("  (Space to toggle)", Style::default().fg(t.dim))
             } else {
                 Span::raw("")
             },
@@ -244,9 +254,9 @@ fn draw_login(frame: &mut Frame, app: &App) {
     };
     frame.render_widget(
         Paragraph::new(format!(" {hint}"))
-            .style(Style::default().fg(COLOR_DIM))
+            .style(Style::default().fg(t.dim))
             .block(Block::default().borders(Borders::TOP)
-                .border_style(Style::default().fg(COLOR_DIM))),
+                .border_style(Style::default().fg(t.dim))),
         status_chunk,
     );
 }
@@ -255,12 +265,12 @@ fn draw_login(frame: &mut Frame, app: &App) {
 
 fn draw_vault(frame: &mut Frame, app: &App) {
     use crate::app::{Focus, ITEM_FILTERS, ItemFilter};
+    let t = &app.theme;
 
     let area = frame.area();
 
-    // Outer: header | body | keybindings
+    // Outer: body | keybindings
     let outer = Layout::vertical([
-        Constraint::Length(2),   // compact header (title + count + filter)
         Constraint::Min(0),      // body
         Constraint::Length(2),   // keybindings bar
     ])
@@ -271,85 +281,107 @@ fn draw_vault(frame: &mut Frame, app: &App) {
         Constraint::Percentage(26),
         Constraint::Percentage(74),
     ])
-    .split(outer[1]);
+    .split(outer[0]);
 
-    // Sidebar: [1] Vaults | [2] Items
+    // Sidebar: [5]-Status (top, fixed 3 rows) | [1]-Vaults | [2]-Items
     let sidebar = Layout::vertical([
-        Constraint::Percentage(35),
-        Constraint::Percentage(65),
+        Constraint::Length(3),   // [5]-Status pane — compact
+        Constraint::Percentage(30),
+        Constraint::Min(0),
     ])
     .split(body[0]);
 
     // Command log height: taller so more entries visible
     let cmd_log_height: u16 = if app.cmd_log.is_empty() { 4 } else { 9 };
+    // Search bar: always visible (3 rows: title + input + border)
+    let search_height: u16 = 3;
     let main = Layout::vertical([
-        Constraint::Min(0),
-        Constraint::Length(cmd_log_height),
+        Constraint::Length(search_height), // [/]-Search bar (always visible)
+        Constraint::Min(0),                // vault list
+        Constraint::Length(cmd_log_height),// [4]-Command Log
     ])
     .split(body[1]);
 
-    // ── Header (compact, no status — feedback goes to command log) ────────
-    let filter_label = app.active_filter.label();
-    let header = Paragraph::new(Line::from(vec![
-        Span::styled(" 🔐 bytewarden", Style::default().fg(COLOR_ACCENT).add_modifier(Modifier::BOLD)),
-        Span::styled(
-            format!("  —  {} items  —  {}", app.filtered_items().len(), filter_label),
-            Style::default().fg(COLOR_DIM),
-        ),
-    ]))
-    .block(Block::default().borders(Borders::BOTTOM)
-        .border_style(Style::default().fg(Color::Rgb(25, 28, 50))));
-    frame.render_widget(header, outer[0]);
 
-    // ── Keybindings bar (bottom, always visible, wraps on narrow) ─────────
+    // ── Keybindings bar (bottom, hints only — status is in [5]-Status pane) ──
+    let available = area.width.saturating_sub(2) as usize;
     let hints: &[(&str, &str)] = &[
-        ("Tab", "panel"),
+        ("^0-5/Tab", "panel"),
+        ("//^0", "search"),
         ("j/k", "navigate"),
         ("Enter", "detail"),
         ("u", "copy user"),
         ("c", "copy pass"),
         ("f", "favorite"),
         ("s", "sync"),
-        ("/", "search"),
-        ("PgUp/Dn", "log scroll"),
         ("?", "help"),
     ];
-    let hint_full = hints.iter()
-        .map(|(k, v)| format!("{k}: {v}"))
-        .collect::<Vec<_>>()
-        .join("  |  ");
-
-    let hint_short = hints.iter()
-        .map(|(k, v)| format!("{k}:{v}"))
-        .collect::<Vec<_>>()
-        .join("  ");
-
-    // Pick the version that fits, truncate with … if even short doesn't fit
-    let available = area.width.saturating_sub(2) as usize;
+    let hint_full  = hints.iter().map(|(k, v)| format!("{k}: {v}")).collect::<Vec<_>>().join("  |  ");
+    let hint_short = hints.iter().map(|(k, v)| format!("{k}:{v}")).collect::<Vec<_>>().join("  ");
     let hint_line = if hint_full.len() <= available {
         hint_full
     } else if hint_short.len() <= available {
         hint_short
     } else {
-        // Truncate with ellipsis
-        let truncated = &hint_short[..available.saturating_sub(1)];
-        format!("{truncated}…")
+        format!("{}…", &hint_short[..available.saturating_sub(1)])
     };
     frame.render_widget(
-        Paragraph::new(format!(" {hint_line}"))
-            .style(Style::default().fg(COLOR_DIM))
+        Paragraph::new(Line::from(Span::styled(format!(" {hint_line}"), Style::default().fg(t.dim))))
             .block(Block::default().borders(Borders::TOP)
-                .border_style(Style::default().fg(Color::Rgb(25, 28, 50)))),
-        outer[2],
+                .border_style(Style::default().fg(Color::Rgb(60, 62, 80)))),
+        outer[1],
+    );
+
+    // ── [5]-Status pane ───────────────────────────────────────────────────
+    // Only shown when an action is running or just finished.
+    // Idle = empty pane (no text).
+    let spinner_frames = ["-", "\\", "|", "/"];
+    let spinner_idx = (app.action_tick / 3) as usize % spinner_frames.len();
+    let (status_title_style, status_line) = match &app.action_state {
+        crate::app::ActionState::Idle => (
+            Style::default().fg(t.inactive),
+            Line::from(""),  // blank — nothing to show
+        ),
+        crate::app::ActionState::Running(msg) => (
+            Style::default().fg(t.accent),
+            Line::from(vec![
+                Span::styled(
+                    format!(" {} ", spinner_frames[spinner_idx]),
+                    Style::default().fg(t.accent).add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(msg.as_str(), Style::default().fg(t.accent)),
+            ]),
+        ),
+        crate::app::ActionState::Done(msg) => (
+            Style::default().fg(t.success),
+            Line::from(vec![
+                Span::styled(" ✓ ", Style::default().fg(t.success).add_modifier(Modifier::BOLD)),
+                Span::styled(msg.as_str(), Style::default().fg(t.success)),
+            ]),
+        ),
+        crate::app::ActionState::Error(msg) => (
+            Style::default().fg(t.error),
+            Line::from(vec![
+                Span::styled(" ✕ ", Style::default().fg(t.error).add_modifier(Modifier::BOLD)),
+                Span::styled(msg.as_str(), Style::default().fg(t.error)),
+            ]),
+        ),
+    };
+    frame.render_widget(
+        Paragraph::new(status_line)
+            .block(Block::default().borders(Borders::ALL).border_type(BorderType::Rounded)
+                .title(Span::styled("─[5]-Status", status_title_style))
+                .border_style(if app.focus == Focus::Status { Style::default().fg(t.accent) } else { Style::default().fg(t.inactive) })),
+        sidebar[0],
     );
 
     // ── [1] Vaults panel ──────────────────────────────────────────────────
     let vaults_focused = app.focus == Focus::Vaults;
-    let vaults_title_style = if vaults_focused { Style::default().fg(COLOR_ACCENT) } else { Style::default().fg(COLOR_DIM) };
+    let vaults_title_style = if vaults_focused { Style::default().fg(t.accent) } else { Style::default().fg(t.inactive) };
     let vault_items = vec![
         ListItem::new(Line::from(vec![
             Span::styled("  My Vault", Style::default().fg(Color::White)),
-            Span::styled(format!("  {}", app.items.len()), Style::default().fg(COLOR_DIM)),
+            Span::styled(format!("  {}", app.items.len()), Style::default().fg(t.dim)),
         ])),
     ];
     let mut vault_state = ListState::default();
@@ -357,25 +389,27 @@ fn draw_vault(frame: &mut Frame, app: &App) {
     frame.render_stateful_widget(
         List::new(vault_items)
             .block(Block::default().borders(Borders::ALL).border_type(BorderType::Rounded)
-                .title(Span::styled("─[1] Vaults", vaults_title_style)))
-            .highlight_style(Style::default().bg(COLOR_SELECTED_BG).fg(Color::White)),
-        sidebar[0],
+                .title(Span::styled("─[1]-Vaults", vaults_title_style))
+                .title_bottom(Line::from(Span::styled("─1 of 1─", Style::default().fg(t.dim))).right_aligned())
+                .border_style(if vaults_focused { Style::default().fg(t.accent) } else { Style::default().fg(t.inactive) }))
+            .highlight_style(Style::default().bg(t.selected_bg).fg(Color::White)),
+        sidebar[1],
         &mut vault_state,
     );
 
     // ── [2] Items filter panel ────────────────────────────────────────────
     let items_focused = app.focus == Focus::Items;
-    let items_title_style = if items_focused { Style::default().fg(COLOR_ACCENT) } else { Style::default().fg(COLOR_DIM) };
+    let items_title_style = if items_focused { Style::default().fg(t.accent) } else { Style::default().fg(t.inactive) };
 
     let filter_list_items: Vec<ListItem> = ITEM_FILTERS.iter().map(|f| {
         let count = app.count_for(f);
         let type_color = match f {
-            ItemFilter::Login      => Color::Blue,
-            ItemFilter::Card       => Color::Magenta,
-            ItemFilter::Identity   => Color::Yellow,
-            ItemFilter::SecureNote => Color::Green,
-            ItemFilter::SshKey     => Color::Rgb(160, 96, 224),
-            ItemFilter::Favorites  => Color::Rgb(255, 200, 0),
+            ItemFilter::Login      => t.item_login,
+            ItemFilter::Card       => t.item_card,
+            ItemFilter::Identity   => t.item_identity,
+            ItemFilter::SecureNote => t.item_note,
+            ItemFilter::SshKey     => t.item_ssh,
+            ItemFilter::Favorites  => t.item_favorite,
             ItemFilter::All        => Color::White,
         };
         let is_active = *f == app.active_filter;
@@ -386,25 +420,29 @@ fn draw_vault(frame: &mut Frame, app: &App) {
         };
         ListItem::new(Line::from(vec![
             Span::styled(format!("  {}", f.label()), label_style),
-            Span::styled(format!("  {count}"), Style::default().fg(COLOR_DIM)),
+            Span::styled(format!("  {count}"), Style::default().fg(t.dim)),
         ]))
     }).collect();
 
     let mut filter_state = ListState::default();
     filter_state.select(Some(app.filter_selected));
+    let items_total = ITEM_FILTERS.len();
+    let items_indicator = format!(" {} of {} ", app.filter_selected + 1, items_total);
     frame.render_stateful_widget(
         List::new(filter_list_items)
             .block(Block::default().borders(Borders::ALL).border_type(BorderType::Rounded)
-                .title(Span::styled("─[2] Items", items_title_style)))
-            .highlight_style(Style::default().bg(COLOR_SELECTED_BG).fg(Color::White))
+                .title(Span::styled("─[2]-Items", items_title_style))
+                .title_bottom(Line::from(Span::styled(format!("─{}─", items_indicator.trim()), Style::default().fg(t.dim))).right_aligned())
+                .border_style(if items_focused { Style::default().fg(t.accent) } else { Style::default().fg(t.inactive) }))
+            .highlight_style(Style::default().bg(t.selected_bg).fg(Color::White))
             .highlight_symbol("▶ "),
-        sidebar[1],
+        sidebar[2],
         &mut filter_state,
     );
 
     // ── Main item list ────────────────────────────────────────────────────
     let list_focused = app.focus == Focus::List;
-    let list_title_style = if list_focused { Style::default().fg(COLOR_ACCENT) } else { Style::default().fg(COLOR_DIM) };
+    let list_title_style = if list_focused { Style::default().fg(t.accent) } else { Style::default().fg(t.inactive) };
 
     let filtered = app.filtered_items();
     let list_items: Vec<ListItem> = filtered.iter().map(|item| {
@@ -414,76 +452,111 @@ fn draw_vault(frame: &mut Frame, app: &App) {
             3 => Color::Magenta,
             4 => Color::Yellow,
             5 => Color::Rgb(160, 96, 224),
-            _ => COLOR_DIM,
+            _ => t.dim,
         };
-        let mut spans = vec![
+        let spans = vec![
             // ★ for favorites, space for others — always same width
             if item.favorite {
-                Span::styled("★ ", Style::default().fg(Color::Rgb(255, 200, 0)))
+                Span::styled("★ ", Style::default().fg(t.item_favorite))
             } else {
                 Span::raw("  ")
             },
             Span::styled(format!("[{}]  ", item_type_label(item.item_type)), Style::default().fg(type_color)),
             Span::raw(item.name.as_str()),
+            // Username intentionally not shown — still used for fuzzy search
         ];
-        if let Some(login) = &item.login {
-            if let Some(user) = &login.username {
-                spans.push(Span::styled(format!("  {user}"), Style::default().fg(COLOR_DIM)));
-            }
-        }
         ListItem::new(Line::from(spans))
     }).collect();
 
     let mut list_state = ListState::default();
+    let filtered_len = filtered.len();
     list_state.select(if filtered.is_empty() { None } else { Some(app.selected_index) });
+    let vault_indicator = if filtered_len > 0 {
+        format!(" {} of {} ", app.selected_index + 1, filtered_len)
+    } else {
+        " 0 of 0 ".to_string()
+    };
+
+    // ── [/] Search bar (always visible) ──────────────────────────────────
+    let search_focused = app.focus == Focus::Search;
+    let search_title_style = if search_focused {
+        Style::default().fg(t.accent)
+    } else {
+        Style::default().fg(t.inactive)
+    };
+    // Same border style as other focused inputs — no custom dark color
+    let search_border_style = border_style_themed(search_focused, t.accent);
+    let search_content = if search_focused {
+        // Focused: show text + cursor, NO extra slash prefix
+        Line::from(vec![
+            Span::styled(app.search_query.as_str(), Style::default().fg(Color::White)),
+            Span::styled("█", Style::default().fg(t.accent)),
+        ])
+    } else if !app.search_query.is_empty() {
+        // Has query but not focused: show text dimly
+        Line::from(Span::styled(app.search_query.as_str(), Style::default().fg(t.dim)))
+    } else {
+        // Empty and unfocused: placeholder
+        Line::from(Span::styled(
+            "type to filter…",
+            Style::default().fg(Color::Rgb(80, 85, 120)),
+        ))
+    };
+    frame.render_widget(
+        Paragraph::new(search_content)
+            .block(Block::default().borders(Borders::ALL).border_type(BorderType::Rounded)
+                .title(Span::styled("─[0]-Search", search_title_style))
+                .border_style(search_border_style)),
+        main[0],
+    );
+
     frame.render_stateful_widget(
         List::new(list_items)
             .block(Block::default().borders(Borders::ALL).border_type(BorderType::Rounded)
-                .title(Span::styled(" Vault ", list_title_style)))
-            .highlight_style(Style::default().bg(COLOR_SELECTED_BG).fg(Color::White).add_modifier(Modifier::BOLD))
+                .title(Span::styled("─[3]-Vault", list_title_style))
+                .title_bottom(Line::from(Span::styled(format!("─{}─", vault_indicator.trim()), Style::default().fg(t.dim))).right_aligned())
+                .border_style(if list_focused { Style::default().fg(t.accent) } else { Style::default().fg(t.inactive) }))
+            .highlight_style(Style::default().bg(t.selected_bg).fg(Color::White).add_modifier(Modifier::BOLD))
             .highlight_symbol("▶ "),
-        main[0],
+        main[1],
         &mut list_state,
     );
 
-    // ── [3] Command Log ───────────────────────────────────────────────────
+    // ── [4] Command Log ───────────────────────────────────────────────────
     let log_focused = app.focus == crate::app::Focus::CmdLog;
-    let log_title_style = if log_focused { Style::default().fg(COLOR_ACCENT) } else { Style::default().fg(COLOR_DIM) };
+    let log_title_style = if log_focused { Style::default().fg(t.accent) } else { Style::default().fg(t.inactive) };
 
-    // Each entry = 2 lines (cmd + result). Build all lines then apply scroll.
     let all_lines: Vec<Line> = if app.cmd_log.is_empty() {
-        vec![Line::from(Span::styled("  no commands yet", Style::default().fg(COLOR_DIM)))]
+        vec![Line::from(Span::styled("  no commands yet", Style::default().fg(t.dim)))]
     } else {
         app.cmd_log.iter().flat_map(|e| {
-            let result_color = if e.ok { COLOR_SUCCESS } else { COLOR_ERROR };
+            let result_color = if e.ok { t.success } else { t.error };
             let icon = if e.ok { "✓" } else { "✕" };
             vec![
-                Line::from(Span::styled(format!("  $ {}", e.cmd), Style::default().fg(COLOR_DIM))),
+                Line::from(Span::styled(format!("  $ {}", e.cmd), Style::default().fg(t.dim))),
                 Line::from(Span::styled(format!("  {icon} {}", e.detail), Style::default().fg(result_color))),
             ]
         }).collect()
     };
 
-    // Visible lines = height minus borders/title (2 rows overhead)
     let visible = (cmd_log_height.saturating_sub(2)) as usize;
     let total = all_lines.len();
-    // scroll=0 means bottom (latest). scroll_offset pushes view upward.
     let end = total.saturating_sub(app.cmd_log_scroll);
     let start = end.saturating_sub(visible);
     let visible_lines: Vec<Line> = all_lines[start..end].to_vec();
 
-    // Scroll indicator shows position when scrolled
     let scroll_indicator = if app.cmd_log_scroll > 0 {
-        format!("─[3] Command Log  ↑ scrolled ({} entries) ", app.cmd_log.len())
+        "─[4]-Command Log  ↑".to_string()
     } else {
-        format!("─[3] Command Log  ({} entries) ", app.cmd_log.len())
+        "─[4]-Command Log".to_string()
     };
 
     frame.render_widget(
         Paragraph::new(visible_lines)
             .block(Block::default().borders(Borders::ALL).border_type(BorderType::Rounded)
-                .title(Span::styled(scroll_indicator, log_title_style))),
-        main[1],
+                .title(Span::styled(scroll_indicator, log_title_style))
+                .border_style(if log_focused { Style::default().fg(t.accent) } else { Style::default().fg(t.inactive) })),
+        main[2],
     );
 }
 
@@ -491,6 +564,7 @@ fn draw_vault(frame: &mut Frame, app: &App) {
 // ── Detail screen ──────────────────────────────────────────────────────────
 
 fn draw_detail(frame: &mut Frame, app: &App) {
+    let t = &app.theme;
     let area = frame.area();
 
     let chunks = Layout::vertical([
@@ -502,13 +576,13 @@ fn draw_detail(frame: &mut Frame, app: &App) {
 
     let item_name = app.selected_item().map(|i| i.name.as_str()).unwrap_or("?");
     let header = Paragraph::new(Line::from(vec![
-        Span::styled(" ← ", Style::default().fg(COLOR_DIM)),
-        Span::styled(item_name, Style::default().fg(COLOR_ACCENT).add_modifier(Modifier::BOLD)),
+        Span::styled(" ← ", Style::default().fg(t.dim)),
+        Span::styled(item_name, Style::default().fg(t.accent).add_modifier(Modifier::BOLD)),
     ]))
     .block(
         Block::default()
             .borders(Borders::BOTTOM)
-            .border_style(Style::default().fg(COLOR_DIM)),
+            .border_style(Style::default().fg(t.dim)),
     );
     frame.render_widget(header, chunks[0]);
 
@@ -531,11 +605,11 @@ fn draw_detail(frame: &mut Frame, app: &App) {
                 "●●●●●●●●".to_string()
             };
             lines.push(Line::from(vec![
-                Span::styled("  Password   : ", Style::default().fg(COLOR_DIM)),
+                Span::styled("  Password   : ", Style::default().fg(t.dim)),
                 Span::styled(pass_text, Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
                 Span::styled(
                     if app.show_password { " (visible)" } else { " (hidden)" },
-                    Style::default().fg(COLOR_DIM),
+                    Style::default().fg(t.dim),
                 ),
             ]));
 
@@ -560,7 +634,7 @@ fn draw_detail(frame: &mut Frame, app: &App) {
         lines.push(Line::from(""));
         lines.push(Line::from(Span::styled(
             "  p: show/hide password  |  c: copy password  |  Esc: back",
-            Style::default().fg(COLOR_DIM),
+            Style::default().fg(t.dim),
         )));
 
         frame.render_widget(
@@ -578,80 +652,6 @@ fn draw_detail(frame: &mut Frame, app: &App) {
 
     draw_status_bar(frame, app, chunks[2]);
 }
-
-// ── Search screen ──────────────────────────────────────────────────────────
-
-fn draw_search(frame: &mut Frame, app: &App) {
-    let area = frame.area();
-
-    let chunks = Layout::vertical([
-        Constraint::Length(3),
-        Constraint::Min(0),
-        Constraint::Length(3),
-    ])
-    .split(area);
-
-    // Search input — shows a blinking-cursor-style underscore
-    frame.render_widget(
-        Paragraph::new(format!("/ {}_", app.search_query))
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .border_type(BorderType::Rounded)
-                    .title(" Search ")
-                    .border_style(Style::default().fg(COLOR_ACCENT)),
-            )
-            .style(Style::default().fg(Color::White)),
-        chunks[0],
-    );
-
-    // Results list
-    let results: Vec<ListItem> = app
-        .search_results
-        .iter()
-        .map(|item| {
-            ListItem::new(Line::from(vec![
-                Span::styled(
-                    format!("[{}] ", item_type_label(item.item_type)),
-                    Style::default().fg(COLOR_DIM),
-                ),
-                Span::raw(&item.name),
-                // Show username as secondary text
-                if let Some(login) = &item.login {
-                    if let Some(user) = &login.username {
-                        Span::styled(format!("  {user}"), Style::default().fg(COLOR_DIM))
-                    } else {
-                        Span::raw("")
-                    }
-                } else {
-                    Span::raw("")
-                },
-            ]))
-        })
-        .collect();
-
-    let count_title = format!(" {} result(s) ", app.search_results.len());
-    let mut list_state = ListState::default();
-    let sel = if app.search_results.is_empty() { None } else { Some(app.selected_index) };
-    list_state.select(sel);
-
-    frame.render_stateful_widget(
-        List::new(results)
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .border_type(BorderType::Rounded)
-                    .title(count_title.as_str()),
-            )
-            .highlight_style(Style::default().bg(COLOR_SELECTED_BG).add_modifier(Modifier::BOLD))
-            .highlight_symbol("▶ "),
-        chunks[1],
-        &mut list_state,
-    );
-
-    draw_status_bar(frame, app, chunks[2]);
-}
-
 // ── Help popup ─────────────────────────────────────────────────────────────
 
 fn draw_help_popup(frame: &mut Frame, area: Rect) {
@@ -702,20 +702,21 @@ fn draw_help_popup(frame: &mut Frame, area: Rect) {
 // ── Status bar ─────────────────────────────────────────────────────────────
 
 fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
+    let t = &app.theme;
     let (text, color) = match &app.status {
         Some(msg) => (
             msg.text.clone(),
-            if msg.is_error { COLOR_ERROR } else { COLOR_SUCCESS },
+            if msg.is_error { t.error } else { t.success },
         ),
         None => {
             let hint = match app.screen {
                 Screen::Login  => "Tab: switch  |  Enter: login  |  Ctrl+C: quit",
                 Screen::Vault  => "Tab: switch panel  |  j/k: navigate  |  Enter: detail  |  u: copy user  |  c: copy pass  |  ?: help",
                 Screen::Detail => "p: password  |  c: copy  |  Esc: back",
-                Screen::Search => "Type to search  |  Enter: open  |  Esc: back",
+                Screen::Search => "Search is now inline — press / from vault",
                 Screen::Help   => "Any key to close",
             };
-            (hint.to_string(), COLOR_DIM)
+            (hint.to_string(), t.dim)
         }
     };
 
@@ -725,7 +726,7 @@ fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
             .block(
                 Block::default()
                     .borders(Borders::TOP)
-                    .border_style(Style::default().fg(COLOR_DIM)),
+                    .border_style(Style::default().fg(t.dim)),
             ),
         area,
     );
@@ -752,12 +753,18 @@ fn center_rect(width_pct: u16, height: u16, area: Rect) -> Rect {
 }
 
 /// Returns the border style for an input field — highlighted when focused.
+#[allow(dead_code)]
 fn border_style(focused: bool) -> Style {
     if focused {
         Style::default().fg(COLOR_ACCENT)
     } else {
         Style::default()
     }
+}
+
+/// Returns the border style using a themed accent color.
+fn border_style_themed(focused: bool, accent: Color) -> Style {
+    if focused { Style::default().fg(accent) } else { Style::default() }
 }
 
 /// A label:value row for the detail screen.
@@ -780,7 +787,7 @@ fn help_line<'a>(key: &'a str, desc: &'a str) -> Line<'a> {
 /// Renders a text input with a block cursor at `cursor_pos`.
 /// When focused, splits the string at the cursor and inserts a █ character.
 /// When unfocused, renders the string as-is.
-fn input_with_cursor<'a>(text: &'a str, cursor_pos: usize, focused: bool) -> Line<'a> {
+fn input_with_cursor<'a>(text: &'a str, cursor_pos: usize, focused: bool, accent: Color) -> Line<'a> {
     if !focused {
         return Line::from(Span::raw(text));
     }
@@ -789,7 +796,7 @@ fn input_with_cursor<'a>(text: &'a str, cursor_pos: usize, focused: bool) -> Lin
     let after: String  = chars[cursor_pos..].iter().collect();
     Line::from(vec![
         Span::raw(before),
-        Span::styled("█", Style::default().fg(COLOR_ACCENT)),
+        Span::styled("█", Style::default().fg(accent)),
         Span::styled(after, Style::default().fg(Color::White)),
     ])
 }

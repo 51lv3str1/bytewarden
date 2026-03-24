@@ -15,11 +15,12 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 source ~/.cargo/env
 
 # 2. Install the Bitwarden CLI
-npm install -g @bitwarden/cli   # preferred
+npm install -g @bitwarden/cli   # installs as "bw", then alias:
+alias bytewarden=bw
 # or: download binary from https://bitwarden.com/download/?app=cli&platform=linux
 
 # 3. Verify bw is working
-bw --version
+bytewarden --version
 
 # 4. Build and run
 cargo run           # dev build
@@ -75,3 +76,37 @@ src/
 ├── ui.rs      — Ratatui widget rendering for all screens
 └── events.rs  — Keyboard event dispatch via crossterm
 ```
+
+## Theming
+
+bytewarden reads `~/.config/bytewarden/config.toml` for theme configuration.
+
+### Built-in presets
+
+```toml
+# Use Catppuccin Macchiato
+theme = "catppuccin"
+
+# Use the default theme (same as not setting theme)
+theme = "default"
+```
+
+### Custom colors (hex only)
+
+```toml
+[theme]
+accent        = "#00d4d4"   # active panel borders, cursor
+inactive      = "#8c8ca0"   # inactive panel titles
+selected_bg   = "#1e3c50"   # selected list row background
+success       = "#00c896"   # success messages
+error         = "#e05060"   # error messages
+dim           = "#888888"   # secondary text
+item_login    = "#5b8fff"   # [Login] type label
+item_card     = "#c060e0"   # [Card] type label
+item_identity = "#e0b840"   # [Identity] type label
+item_note     = "#00c896"   # [Note] type label
+item_ssh      = "#a060e0"   # [SSH] type label
+item_favorite = "#ffc800"   # ★ favorite star
+```
+
+You can mix a preset with overrides — `theme = "catppuccin"` loads the preset, and individual `[theme]` keys override specific colors.

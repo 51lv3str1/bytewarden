@@ -257,6 +257,7 @@ pub fn item_type_label(t: u8) -> &'static str {
         2 => "Note",
         3 => "Card",
         4 => "Identity",
+        5 => "SSH",
         _ => "Other",
     }
 }

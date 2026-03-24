@@ -3,11 +3,12 @@
 use crate::bw::{BwClient, Item};
 
 #[derive(Debug, PartialEq, Clone)]
+#[allow(dead_code)]
 pub enum Screen {
     Login,
     Vault,
     Detail,
-    Search,
+    Search, // kept for compatibility — search is now inline in Vault
     Help,
 }
 
@@ -15,10 +16,12 @@ pub enum Screen {
 #[derive(Debug, PartialEq, Clone)]
 #[allow(dead_code)]
 pub enum Focus {
+    Status,  // [5] status pane (top of sidebar)
+    Search,  // [0] / search bar
     Vaults,  // [1] top-left panel
     Items,   // [2] bottom-left panel
-    List,    // main item list (right)
-    CmdLog,  // [3] command log (bottom right)
+    List,    // [3] vault list (main)
+    CmdLog,  // [4] command log
 }
 
 /// Filter by item type in the Items panel
@@ -100,6 +103,7 @@ pub struct App {
 
     // ── Search ────────────────────────────────────────
     pub search_query: String,
+    #[allow(dead_code)]
     pub search_results: Vec<Item>,
 
     // ── Detail screen ─────────────────────────────────
@@ -113,7 +117,32 @@ pub struct App {
     pub cmd_log: Vec<CmdEntry>,
     pub cmd_log_scroll: usize,  // scroll offset (0 = bottom/latest)
 
+    // ── Loading / status indicator pane ──────────────────────────────────
+    pub action_state: ActionState,
+    pub action_tick: u8,        // incremented on each render tick for animation
+    pub pending_action: PendingAction, // deferred work — runs after one Running frame
+
     pub bw: BwClient,
+    pub theme: crate::theme::Theme,
+}
+
+/// State of the action status pane.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ActionState {
+    Idle,
+    Running(String), // animated spinner + label
+    Done(String),    // green checkmark, auto-clears
+    Error(String),   // red x, auto-clears
+}
+
+/// A deferred action — set after one render frame of Running state.
+#[derive(Debug, Clone, PartialEq)]
+pub enum PendingAction {
+    None,
+    CopyUsername,
+    CopyPassword,
+    SyncVault,
+    ToggleFavorite,
 }
 
 /// A single entry in the command log.
@@ -162,9 +191,13 @@ impl App {
 
             show_password: false,
             status: None,
+            action_state: ActionState::Idle,
+            action_tick: 0,
+            pending_action: PendingAction::None,
             cmd_log: Vec::new(),
             cmd_log_scroll: 0,
             bw: BwClient::new(),
+            theme: crate::theme::load(&crate::app::config::config_path()),
         }
     }
 
@@ -184,10 +217,17 @@ impl App {
         }
     }
 
+    #[allow(dead_code)]
     pub fn go_to_search(&mut self) {
-        self.screen = Screen::Search;
+        self.focus = Focus::Search;
+        self.selected_index = 0;
+        self.scroll_offset = 0;
+    }
+
+    pub fn clear_search(&mut self) {
         self.search_query.clear();
-        self.search_results = self.items.clone();
+        self.search_results.clear();
+        self.focus = Focus::List;
         self.selected_index = 0;
         self.scroll_offset = 0;
     }
@@ -205,13 +245,28 @@ impl App {
 
     // ── Sidebar navigation ────────────────────────────────────────────────
 
-    /// Cycle focus: List → Items → Vaults → CmdLog → List (Tab key)
+    /// Cycle focus: 5→0→1→2→3→4→5 (Tab key)
     pub fn cycle_focus(&mut self) {
         self.focus = match self.focus {
-            Focus::List    => Focus::Items,
-            Focus::Items   => Focus::Vaults,
-            Focus::Vaults  => Focus::CmdLog,
-            Focus::CmdLog  => Focus::List,
+            Focus::Status  => Focus::Search,
+            Focus::Search  => Focus::Vaults,
+            Focus::Vaults  => Focus::Items,
+            Focus::Items   => Focus::List,
+            Focus::List    => Focus::CmdLog,
+            Focus::CmdLog  => Focus::Status,
+        };
+    }
+
+    /// Jump directly to a panel by number key (like lazygit)
+    pub fn focus_panel(&mut self, n: u8) {
+        self.focus = match n {
+            0 => Focus::Search,
+            1 => Focus::Vaults,
+            2 => Focus::Items,
+            3 => Focus::List,
+            4 => Focus::CmdLog,
+            5 => Focus::Status,
+            _ => return,
         };
     }
 
@@ -257,21 +312,38 @@ impl App {
         }
     }
 
-    /// Returns items filtered by the active sidebar filter.
+    pub fn move_down_page(&mut self) {
+        for _ in 0..10 { self.move_down(); }
+    }
+
+    pub fn move_up_page(&mut self) {
+        for _ in 0..10 { self.move_up(); }
+    }
+
+    /// Returns items filtered by active filter AND search query.
     pub fn filtered_items(&self) -> Vec<&Item> {
-        self.items.iter().filter(|item| {
+        let base: Vec<&Item> = self.items.iter().filter(|item| {
             match &self.active_filter {
                 ItemFilter::All       => true,
                 ItemFilter::Favorites => item.favorite,
-                ItemFilter::Login      |
-                ItemFilter::Card       |
-                ItemFilter::Identity   |
-                ItemFilter::SecureNote |
-                ItemFilter::SshKey     => {
-                    self.active_filter.type_id() == Some(item.item_type)
-                }
+                _                     => self.active_filter.type_id() == Some(item.item_type),
             }
-        }).collect()
+        }).collect();
+
+        // If search is active, further filter by fuzzy score
+        if !self.search_query.is_empty() {
+            let query = self.search_query.to_lowercase();
+            let mut scored: Vec<(i32, &Item)> = base.into_iter()
+                .filter_map(|item| {
+                    let s = fuzzy_score(item, &query);
+                    if s > 0 { Some((s, item)) } else { None }
+                })
+                .collect();
+            scored.sort_by(|a, b| b.0.cmp(&a.0));
+            scored.into_iter().map(|(_, i)| i).collect()
+        } else {
+            base
+        }
     }
 
     /// Returns the currently selected item from the filtered list.
@@ -293,21 +365,7 @@ impl App {
     // ── Search (in-memory fuzzy) ───────────────────────────────────────────
 
     pub fn perform_search(&mut self) {
-        let query = self.search_query.trim().to_lowercase();
-        if query.is_empty() {
-            self.search_results = self.items.clone();
-            self.selected_index = 0;
-            self.scroll_offset = 0;
-            return;
-        }
-        let mut scored: Vec<(i32, Item)> = self.items.iter()
-            .filter_map(|item| {
-                let score = fuzzy_score(item, &query);
-                if score > 0 { Some((score, item.clone())) } else { None }
-            })
-            .collect();
-        scored.sort_by(|a, b| b.0.cmp(&a.0));
-        self.search_results = scored.into_iter().map(|(_, i)| i).collect();
+        // filtered_items() handles the actual filtering — just reset cursor
         self.selected_index = 0;
         self.scroll_offset = 0;
     }
@@ -371,36 +429,52 @@ impl App {
     // ── Clipboard ─────────────────────────────────────────────────────────
 
     pub fn copy_username_to_clipboard(&mut self) {
+        if self.selected_item().is_some() {
+            self.set_action(ActionState::Running("Copying user…".to_string()));
+            self.pending_action = PendingAction::CopyUsername;
+        }
+    }
+
+    pub fn do_copy_username(&mut self) {
         if let Some(item) = self.selected_item() {
             let item_id = item.id.clone();
             let item_name = item.name.clone();
             let cmd = format!("bw get username {} --session {}", item_id, self.bw.session_key.as_deref().unwrap_or("***"));
             match self.bw.get_username(&item_id) {
                 Ok(username) => {
+                    self.set_action(ActionState::Done("Copied ✓".to_string()));
                     self.push_cmd(&cmd, true, &format!("username for {item_name}"));
                     self.write_clipboard(username, "Username copied to clipboard ✓");
                 }
                 Err(e) => {
+                    self.set_action(ActionState::Error("Failed".to_string()));
                     self.push_cmd(&cmd, false, &e.clone());
-                    self.set_status(&format!("Error: {e}"), true);
                 }
             }
         }
     }
 
     pub fn copy_password_to_clipboard(&mut self) {
+        if self.selected_item().is_some() {
+            self.set_action(ActionState::Running("Copying pass…".to_string()));
+            self.pending_action = PendingAction::CopyPassword;
+        }
+    }
+
+    pub fn do_copy_password(&mut self) {
         if let Some(item) = self.selected_item() {
             let item_id = item.id.clone();
             let item_name = item.name.clone();
             let cmd = format!("bw get password {} --session {}", item_id, self.bw.session_key.as_deref().unwrap_or("***"));
             match self.bw.get_password(&item_id) {
                 Ok(password) => {
+                    self.set_action(ActionState::Done("Copied ✓".to_string()));
                     self.push_cmd(&cmd, true, &format!("password for {} [hidden]", item_name));
                     self.write_clipboard(password, "Password copied to clipboard ✓");
                 }
                 Err(e) => {
+                    self.set_action(ActionState::Error("Failed".to_string()));
                     self.push_cmd(&cmd, false, &e.clone());
-                    self.set_status(&format!("Error: {e}"), true);
                 }
             }
         }
@@ -476,6 +550,13 @@ impl App {
     }
 
     pub fn toggle_favorite(&mut self) {
+        if self.selected_item().is_some() {
+            self.set_action(ActionState::Running("Updating…".to_string()));
+            self.pending_action = PendingAction::ToggleFavorite;
+        }
+    }
+
+    pub fn do_toggle_favorite(&mut self) {
         if let Some(item) = self.selected_item() {
             let item_id = item.id.clone();
             let item_name = item.name.clone();
@@ -483,32 +564,37 @@ impl App {
             let cmd = format!("bw edit item {} --session {}", item_id, self.bw.session_key.as_deref().unwrap_or("***"));
             match self.bw.set_favorite(&item_id, new_fav) {
                 Ok(_) => {
-                    // Update in-memory state immediately (no full reload needed)
                     if let Some(i) = self.items.iter_mut().find(|i| i.id == item_id) {
                         i.favorite = new_fav;
                     }
-                    let label = if new_fav { "added to favorites" } else { "removed from favorites" };
+                    let label = if new_fav { "★ Favorited" } else { "Unfavorited" };
+                    self.set_action(ActionState::Done(label.to_string()));
                     self.push_cmd(&cmd, true, &format!("{item_name} {label}"));
-                    self.set_status(&format!("{} {label} ✓", item_name), false);
                 }
                 Err(e) => {
+                    self.set_action(ActionState::Error("Failed".to_string()));
                     self.push_cmd(&cmd, false, &e.clone());
-                    self.set_status(&format!("Error: {e}"), true);
                 }
             }
         }
     }
 
     pub fn sync_vault(&mut self) {
+        self.set_action(ActionState::Running("Syncing…".to_string()));
+        self.pending_action = PendingAction::SyncVault;
+    }
+
+    pub fn do_sync_vault(&mut self) {
         let cmd = format!("bw sync --session {}", self.bw.session_key.as_deref().unwrap_or("***"));
         match self.bw.sync() {
             Ok(()) => {
+                self.set_action(ActionState::Done("Synced ✓".to_string()));
                 self.push_cmd(&cmd, true, "vault synced");
-                self.load_items(); self.set_status("Vault synced ✓", false);
+                self.load_items();
             }
             Err(e) => {
+                self.set_action(ActionState::Error("Sync failed".to_string()));
                 self.push_cmd(&cmd, false, &e.clone());
-                self.set_status(&format!("Sync error: {e}"), true);
             }
         }
     }
@@ -543,6 +629,15 @@ impl App {
     /// Scroll the command log down (newer entries)
     pub fn cmd_log_scroll_down(&mut self, lines: usize) {
         self.cmd_log_scroll = self.cmd_log_scroll.saturating_sub(lines);
+    }
+
+    pub fn set_action(&mut self, state: ActionState) {
+        self.action_state = state;
+        self.action_tick = 0;
+    }
+
+    pub fn tick_action(&mut self) {
+        self.action_tick = self.action_tick.wrapping_add(1);
     }
 
     pub fn set_status(&mut self, msg: &str, is_error: bool) {
@@ -750,18 +845,46 @@ pub mod config {
         cfg
     }
 
-    /// Writes the config file. Clears email if save_email is false.
+    /// Writes save_email and email to the config file.
+    /// PRESERVES all other content (e.g. [theme] section) — only
+    /// updates/removes lines it owns: save_email and email.
     pub fn write(save_email: bool, email: Option<&str>) {
         ensure_dir();
-        let mut lines = vec![format!("save_email = {save_email}")];
+
+        // Read existing file content (or start fresh)
+        let existing = fs::read_to_string(config_file()).unwrap_or_default();
+
+        // Split into lines, filter out lines we own, keep everything else
+        let mut preserved: Vec<String> = existing
+            .lines()
+            .filter(|l| {
+                let t = l.trim();
+                !t.starts_with("save_email =") && !t.starts_with("email =")
+            })
+            .map(|l| l.to_string())
+            .collect();
+
+        // Remove leading blank lines that might pile up
+        while preserved.first().map(|l| l.trim().is_empty()).unwrap_or(false) {
+            preserved.remove(0);
+        }
+
+        // Build our owned section at the top
+        let mut owned = vec![format!("save_email = {save_email}")];
         if save_email {
             if let Some(e) = email {
-                lines.push(format!("email = \"{e}\""));
+                owned.push(format!("email = \"{e}\""));
             }
         }
-        let _ = fs::write(config_file(), lines.join("
-") + "
-");
+
+        // Combine: owned lines first, then a blank line, then preserved rest
+        let mut all = owned;
+        if !preserved.is_empty() {
+            all.push(String::new()); // blank separator
+            all.extend(preserved);
+        }
+
+        let _ = fs::write(config_file(), all.join("\n") + "\n");
     }
 }
 
