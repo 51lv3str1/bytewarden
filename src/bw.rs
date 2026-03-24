@@ -17,6 +17,7 @@ use std::process::Command;
 // ── Data models ───────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Deserialize)]
+#[allow(dead_code)]
 pub struct Item {
     pub id: String,
     pub name: String,
@@ -26,6 +27,8 @@ pub struct Item {
     pub notes: Option<String>,
     #[serde(rename = "folderId")]
     pub folder_id: Option<String>,
+    #[serde(default)]
+    pub favorite: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -109,6 +112,19 @@ impl BwClient {
         }
     }
 
+    pub fn get_username(&self, item_id: &str) -> Result<String, String> {
+        let session = self.session_key.as_deref().ok_or("Vault is locked")?;
+        let output = Command::new("bw")
+            .args(["get", "username", item_id, "--session", session])
+            .output()
+            .map_err(|e| format!("Error running bw: {e}"))?;
+        if output.status.success() {
+            Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+        } else {
+            Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
+        }
+    }
+
     pub fn get_password(&self, item_id: &str) -> Result<String, String> {
         let session = self.session_key.as_deref().ok_or("Vault is locked")?;
 
@@ -124,6 +140,7 @@ impl BwClient {
         }
     }
 
+    #[allow(dead_code)]
     pub fn get_totp(&self, item_id: &str) -> Result<String, String> {
         let session = self.session_key.as_deref().ok_or("Vault is locked")?;
 
@@ -154,6 +171,7 @@ impl BwClient {
         }
     }
 
+    #[allow(dead_code)]
     pub fn generate_password(length: u32, special: bool) -> Result<String, String> {
         let mut args = vec![
             "generate".to_string(),
@@ -174,6 +192,56 @@ impl BwClient {
             Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
         } else {
             Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
+        }
+    }
+
+    /// Toggles the favorite flag on a vault item using `bw edit`.
+    /// Workflow: get item JSON → flip favorite → encode → edit
+    pub fn set_favorite(&self, item_id: &str, favorite: bool) -> Result<String, String> {
+        let session = self.session_key.as_deref().ok_or("Vault is locked")?;
+
+        // 1. Get current item JSON
+        let get_out = Command::new("bw")
+            .args(["get", "item", item_id, "--session", session])
+            .output()
+            .map_err(|e| format!("Error running bw: {e}"))?;
+        if !get_out.status.success() {
+            return Err(String::from_utf8_lossy(&get_out.stderr).trim().to_string());
+        }
+        let json = String::from_utf8_lossy(&get_out.stdout).to_string();
+
+        // 2. Parse, flip favorite, re-serialize
+        let mut val: serde_json::Value = serde_json::from_str(&json)
+            .map_err(|e| format!("JSON parse error: {e}"))?;
+        val["favorite"] = serde_json::Value::Bool(favorite);
+        let new_json = serde_json::to_string(&val)
+            .map_err(|e| format!("JSON serialize error: {e}"))?;
+
+        // 3. Base64-encode (bw encode = base64)
+        use std::process::Stdio;
+        let mut encode_cmd = Command::new("bw")
+            .args(["encode"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("Error running bw encode: {e}"))?;
+        if let Some(mut stdin) = encode_cmd.stdin.take() {
+            use std::io::Write;
+            let _ = stdin.write_all(new_json.as_bytes());
+        }
+        let encode_out = encode_cmd.wait_with_output()
+            .map_err(|e| format!("bw encode error: {e}"))?;
+        let encoded = String::from_utf8_lossy(&encode_out.stdout).trim().to_string();
+
+        // 4. Edit the item
+        let edit_out = Command::new("bw")
+            .args(["edit", "item", item_id, &encoded, "--session", session])
+            .output()
+            .map_err(|e| format!("Error running bw edit: {e}"))?;
+        if edit_out.status.success() {
+            Ok(String::from_utf8_lossy(&edit_out.stdout).trim().to_string())
+        } else {
+            Err(String::from_utf8_lossy(&edit_out.stderr).trim().to_string())
         }
     }
 

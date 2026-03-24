@@ -25,25 +25,31 @@ pub fn handle_events(app: &mut App) -> std::io::Result<()> {
 
 fn handle_login(app: &mut App, key: KeyEvent) {
     match key.code {
+        // Tab cycles Email → Password → SaveEmail → Email
         KeyCode::Tab => {
             app.active_field = match app.active_field {
-                LoginField::Email    => LoginField::Password,
-                LoginField::Password => LoginField::Email,
+                LoginField::Email     => LoginField::Password,
+                LoginField::Password  => LoginField::SaveEmail,
+                LoginField::SaveEmail => LoginField::Email,
             };
         }
-        KeyCode::Enter => app.attempt_login(),
-        KeyCode::Backspace => {
-            app.clear_login_error();
-            match app.active_field {
-                LoginField::Email    => { app.email_input.pop(); }
-                LoginField::Password => { app.password_input.pop(); }
-            }
+        // Space on checkbox toggles it
+        KeyCode::Char(' ') if app.active_field == LoginField::SaveEmail => {
+            app.toggle_save_email();
         }
-        KeyCode::Char(c) => {
-            app.clear_login_error();
-            match app.active_field {
-                LoginField::Email    => app.email_input.push(c),
-                LoginField::Password => app.password_input.push(c),
+        // Enter submits (from any field)
+        KeyCode::Enter => app.attempt_login(),
+        // Cursor movement (only active in Email/Password fields)
+        KeyCode::Left      => app.cursor_left(),
+        KeyCode::Right     => app.cursor_right(),
+        KeyCode::Home      => app.cursor_home(),
+        KeyCode::End       => app.cursor_end(),
+        KeyCode::Delete    => { app.clear_login_error(); app.delete_char_at(); }
+        KeyCode::Backspace => { app.clear_login_error(); app.delete_char_before(); }
+        KeyCode::Char(c)   => {
+            if app.active_field != LoginField::SaveEmail {
+                app.clear_login_error();
+                app.insert_char(c);
             }
         }
         _ => {}
@@ -63,16 +69,37 @@ fn handle_vault(app: &mut App, key: KeyEvent) {
             _ => {}
         },
 
+        // ── Vaults panel focused ──────────────────────────────────────────
+        Focus::Vaults => match key.code {
+            KeyCode::Tab | KeyCode::Esc => app.cycle_focus(),
+            _ => {}
+        },
+
+        // ── Command log focused ───────────────────────────────────────────
+        Focus::CmdLog => match key.code {
+            KeyCode::Char('j') | KeyCode::Down  => app.cmd_log_scroll_up(1),
+            KeyCode::Char('k') | KeyCode::Up    => app.cmd_log_scroll_down(1),
+            KeyCode::PageUp                      => app.cmd_log_scroll_up(5),
+            KeyCode::PageDown                    => app.cmd_log_scroll_down(5),
+            KeyCode::Tab | KeyCode::Esc          => app.cycle_focus(),
+            _ => {}
+        },
+
         // ── Main list focused ─────────────────────────────────────────────
-        Focus::List | Focus::Vaults => match key.code {
+        Focus::List => match key.code {
             KeyCode::Char('j') | KeyCode::Down  => app.move_down(),
             KeyCode::Char('k') | KeyCode::Up    => app.move_up(),
             KeyCode::Enter | KeyCode::Char('l') => app.go_to_detail(),
             KeyCode::Tab                         => app.cycle_focus(),
             KeyCode::Char('/')                   => app.go_to_search(),
+            KeyCode::Char('u')                   => app.copy_username_to_clipboard(),
             KeyCode::Char('c')                   => app.copy_password_to_clipboard(),
+            KeyCode::Char('f')                   => app.toggle_favorite(),
             KeyCode::Char('s')                   => app.sync_vault(),
             KeyCode::Char('?')                   => app.screen = Screen::Help,
+            // Command log scrolling
+            KeyCode::PageUp                      => app.cmd_log_scroll_up(5),
+            KeyCode::PageDown                    => app.cmd_log_scroll_down(5),
             KeyCode::Char('q')                   => {
                 app.bw.lock();
                 app.screen = Screen::Login;
