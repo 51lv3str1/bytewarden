@@ -16,7 +16,7 @@ pub fn handle_events(app: &mut App) -> std::io::Result<()> {
             Screen::Login  => handle_login(app, key),
             Screen::Vault  => handle_vault(app, key),
             Screen::Detail => handle_detail(app, key),
-            Screen::Search => {} // Search is now inline in Vault — should never reach here
+            Screen::Search => {}
             Screen::Help   => { app.go_back(); }
         }
     }
@@ -55,85 +55,82 @@ fn handle_login(app: &mut App, key: KeyEvent) {
 fn handle_vault(app: &mut App, key: KeyEvent) {
     app.clear_status();
 
-    // ── Global keys — work regardless of focused panel ────────────────────
+    // ── F1-F5: jump to panels by index shown on screen ────────────────────
+    // F-keys work reliably in all terminals, no modifier needed,
+    // and never conflict with text input.
+    //   [5]-Status  → F5      [0]-Search → F1 (or /)
+    //   [1]-Vaults  → F1+1    mapped as:
+    // Screen labels:  [5] [0] [1] [2] [3] [4]
+    // F-key mapping:  F5  F1  F2  F3  F4   (F5=status shown at top)
+    // Use the NUMBER shown in brackets: 0=F1 workaround, but simpler:
+    // Map directly: F1=[1]-Vaults, F2=[2]-Items, F3=[3]-Vault,
+    //               F4=[4]-CmdLog, F5=[5]-Status, /=[0]-Search
     match key.code {
-        // PgUp/PgDn scroll the main list from anywhere
-        KeyCode::PageUp   => { app.move_up_page(); return; }
-        KeyCode::PageDown => { app.move_down_page(); return; }
+        KeyCode::F(1) => { app.focus_panel(1); return; }
+        KeyCode::F(2) => { app.focus_panel(2); return; }
+        KeyCode::F(3) => { app.focus_panel(3); return; }
+        KeyCode::F(4) => { app.focus_panel(4); return; }
+        KeyCode::F(5) => { app.focus_panel(5); return; }
         _ => {}
     }
 
-    // Number keys and / jump directly to panels (like lazygit)
-    if let KeyCode::Char(c) = key.code {
-        if key.modifiers == KeyModifiers::CONTROL {
-            match c {
-                '0' => { app.focus_panel(0); return; }
-                '1' => { app.focus_panel(1); return; }
-                '2' => { app.focus_panel(2); return; }
-                '3' => { app.focus_panel(3); return; }
-                '4' => { app.focus_panel(4); return; }
-                '5' => { app.focus_panel(5); return; }
-                _ => {}
-            }
-        }
-        // '/' without modifier focuses search (doesn't conflict — search
-        // bar handles its own chars once focused)
-        if key.modifiers == KeyModifiers::NONE && c == '/' {
-            app.focus_panel(0); return;
+    // '/' always focuses search (works from any pane)
+    if key.modifiers == KeyModifiers::NONE {
+        if let KeyCode::Char('/') = key.code {
+            app.focus_panel(0);
+            return;
         }
     }
 
     match app.focus.clone() {
-        // ── [5] Status pane ───────────────────────────────────────────────
+        // ── [5]-Status ────────────────────────────────────────────────────
         Focus::Status => match key.code {
             KeyCode::Tab | KeyCode::Esc => app.cycle_focus(),
             _ => {}
         },
 
-        // ── [1] Vaults panel ─────────────────────────────────────────────
+        // ── [1]-Vaults ────────────────────────────────────────────────────
         Focus::Vaults => match key.code {
             KeyCode::Tab | KeyCode::Esc => app.cycle_focus(),
             _ => {}
         },
 
-        // ── [2] Items filter panel ────────────────────────────────────────
+        // ── [2]-Items ─────────────────────────────────────────────────────
         Focus::Items => match key.code {
             KeyCode::Char('j') | KeyCode::Down  => app.filter_move_down(),
             KeyCode::Char('k') | KeyCode::Up    => app.filter_move_up(),
+            KeyCode::PageDown                    => app.filter_move_down(),
+            KeyCode::PageUp                      => app.filter_move_up(),
             KeyCode::Enter                       => app.apply_filter(),
             KeyCode::Tab | KeyCode::Esc          => app.cycle_focus(),
             _ => {}
         },
 
-        // ── [/] Search bar ────────────────────────────────────────────────
+        // ── [0]-Search ────────────────────────────────────────────────────
         Focus::Search => match key.code {
-            KeyCode::Esc => app.clear_search(),
-            KeyCode::Tab => app.cycle_focus(),
-            // j/k navigate results while in search
-            KeyCode::Char('j') | KeyCode::Down  => app.move_down(),
-            KeyCode::Char('k') | KeyCode::Up    => app.move_up(),
+            KeyCode::Esc       => app.clear_search(),
+            KeyCode::Tab       => app.cycle_focus(),
+            KeyCode::Char('j') | KeyCode::Down => app.move_down(),
+            KeyCode::Char('k') | KeyCode::Up   => app.move_up(),
+            KeyCode::PageDown                   => app.move_down_page(),
+            KeyCode::PageUp                     => app.move_up_page(),
             KeyCode::Enter => {
-                // Open selected result in detail
                 if !app.filtered_items().is_empty() {
                     app.screen = Screen::Detail;
                     app.show_password = false;
                 }
             }
-            KeyCode::Backspace => {
-                app.search_query.pop();
-                app.perform_search();
-            }
-            KeyCode::Char(c) => {
-                app.search_query.push(c);
-                app.perform_search();
-            }
+            KeyCode::Backspace => { app.search_query.pop(); app.perform_search(); }
+            KeyCode::Char(c)   => { app.search_query.push(c); app.perform_search(); }
             _ => {}
         },
 
-        // ── [3] Main list ─────────────────────────────────────────────────
+        // ── [3]-Vault (main list) ─────────────────────────────────────────
         Focus::List => match key.code {
             KeyCode::Char('j') | KeyCode::Down  => app.move_down(),
             KeyCode::Char('k') | KeyCode::Up    => app.move_up(),
+            KeyCode::PageDown                    => app.move_down_page(),
+            KeyCode::PageUp                      => app.move_up_page(),
             KeyCode::Enter | KeyCode::Char('l') => app.go_to_detail(),
             KeyCode::Tab                         => app.cycle_focus(),
             KeyCode::Char('u')                   => app.copy_username_to_clipboard(),
@@ -151,12 +148,12 @@ fn handle_vault(app: &mut App, key: KeyEvent) {
             _ => {}
         },
 
-        // ── [4] Command log ───────────────────────────────────────────────
+        // ── [4]-Command Log ───────────────────────────────────────────────
         Focus::CmdLog => match key.code {
             KeyCode::Char('j') | KeyCode::Down  => app.cmd_log_scroll_up(1),
             KeyCode::Char('k') | KeyCode::Up    => app.cmd_log_scroll_down(1),
-            KeyCode::PageUp                      => app.cmd_log_scroll_up(5),
             KeyCode::PageDown                    => app.cmd_log_scroll_down(5),
+            KeyCode::PageUp                      => app.cmd_log_scroll_up(5),
             KeyCode::Tab | KeyCode::Esc          => app.cycle_focus(),
             _ => {}
         },

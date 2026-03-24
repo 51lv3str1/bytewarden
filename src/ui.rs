@@ -306,13 +306,14 @@ fn draw_vault(frame: &mut Frame, app: &App) {
     // ── Keybindings bar (bottom, hints only — status is in [5]-Status pane) ──
     let available = area.width.saturating_sub(2) as usize;
     let hints: &[(&str, &str)] = &[
-        ("^0-5/Tab", "panel"),
-        ("//^0", "search"),
+        ("F1-F5", "panel"),
+        ("/", "search"),
         ("j/k", "navigate"),
+        ("PgUp/Dn", "scroll"),
         ("Enter", "detail"),
         ("u", "copy user"),
         ("c", "copy pass"),
-        ("f", "favorite"),
+        ("f", "fav"),
         ("s", "sync"),
         ("?", "help"),
     ];
