@@ -334,3 +334,4 @@ fn handle_mouse(app: &mut App, mouse: MouseEvent) {
         _ => {}
     }
 }
+

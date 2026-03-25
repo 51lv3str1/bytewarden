@@ -271,12 +271,11 @@ impl App {
 
     pub fn cycle_focus(&mut self) {
         self.focus = match self.focus {
-            Focus::Status => Focus::Search,
-            Focus::Search => Focus::Vaults,
-            Focus::Vaults => Focus::Items,
-            Focus::Items  => Focus::List,
-            Focus::List   => Focus::CmdLog,
-            Focus::CmdLog => Focus::Status,
+            Focus::Status | Focus::CmdLog => Focus::Search,  // Status skipped in cycle
+            Focus::Search  => Focus::Vaults,
+            Focus::Vaults  => Focus::Items,
+            Focus::Items   => Focus::List,
+            Focus::List    => Focus::CmdLog,
         };
     }
 
@@ -287,7 +286,7 @@ impl App {
             2 => Focus::Items,
             3 => Focus::List,
             4 => Focus::CmdLog,
-            5 => Focus::Status,
+            5 => return, // Status not user-selectable
             _ => return,
         };
     }

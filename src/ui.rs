@@ -411,7 +411,7 @@ fn draw_vault(frame: &mut Frame, app: &mut App) {
     // ── Keybindings bar (bottom, hints only — status is in [5]-Status pane) ──
     let available = area.width.saturating_sub(2) as usize;
     let hints: &[(&str, &str)] = &[
-        ("F1-F5", "panel"),
+        ("F1-F4", "panel"),
         ("/", "search"),
         ("j/k", "navigate"),
         ("PgUp/Dn", "scroll"),
@@ -477,8 +477,8 @@ fn draw_vault(frame: &mut Frame, app: &mut App) {
     frame.render_widget(
         Paragraph::new(status_line)
             .block(Block::default().borders(Borders::ALL).border_type(BorderType::Rounded)
-                .title(Span::styled("─[5]-Status", status_title_style))
-                .border_style(if app.focus == Focus::Status { Style::default().fg(t.accent) } else { Style::default().fg(t.inactive) })),
+                .title(Span::styled("─Status", status_title_style))
+                .border_style(Style::default().fg(t.inactive))),
         sidebar[0],
     );
 
@@ -612,7 +612,7 @@ fn draw_vault(frame: &mut Frame, app: &mut App) {
     frame.render_widget(
         Paragraph::new(search_content)
             .block(Block::default().borders(Borders::ALL).border_type(BorderType::Rounded)
-                .title(Span::styled("─[0]-Search", search_title_style))
+                .title(Span::styled("─[/]-Search", search_title_style))
                 .border_style(search_border_style)),
         main[0],
     );
