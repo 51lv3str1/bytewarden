@@ -20,7 +20,7 @@ Wraps the official `bw` CLI to provide a keyboard-driven, mouse-supported vault 
 - [Rust toolchain](https://rustup.rs) (`cargo`) to build from source
 - Clipboard tool: `wl-copy` (Wayland), `xclip` / `xsel` (X11), or `pbcopy` (macOS)
 
-> **Note:** The login screen font (`mono12`) is bundled inside the binary via `figlet-rs` — no system `figlet` install needed.
+> **Note:** The login screen wordmark uses the bundled `slant` FIGlet font via `figlet-rs` — no system `figlet` install needed.
 
 ### Install system dependencies
 
@@ -62,7 +62,7 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 | `crossterm` | 0.29 | Cross-platform terminal control, keyboard & mouse |
 | `serde` + `serde_json` | 1 | Parse `bw` CLI JSON output |
 | `color-eyre` | 0.6 | Error reporting |
-| `figlet-rs` | 0.1 | Render login wordmark — bundles font, no system dep |
+| `figlet-rs` | 0.1 | Render login wordmark with bundled `slant` font — no system dep |
 
 ---
 
@@ -91,9 +91,24 @@ cargo build --release
 
 The password field is always masked. Email is pre-filled if **Save email** is enabled.
 
+The field cycle order is: **Email → Password → Save email → Auto-lock → Email**.
+
 ---
 
 ## Vault screen
+
+### Layout
+
+The vault screen is divided into five panels:
+
+| Panel | Label | Description |
+|-------|-------|-------------|
+| `[5]` | Status | Action feedback (spinner, ✓, ✕). Read-only — not focusable. |
+| `[1]` | Vaults | Vault selector (currently shows My Vault). |
+| `[2]` | Items | Item type filter list. |
+| `[/]` | Search | Live fuzzy search bar. |
+| `[3]` | Vault | Main item list. |
+| `[4]` | Command Log | Log of every `bw` CLI call and its result. |
 
 ### Navigation
 
@@ -103,32 +118,33 @@ The password field is always masked. Email is pre-filled if **Save email** is en
 | `F2` | Focus **[2]-Items** filter panel |
 | `F3` | Focus **[3]-Vault** list |
 | `F4` | Focus **[4]-Command Log** |
-| `F5` | Focus **[5]-Status** pane |
-| `/` | Focus **[0]-Search** bar |
-| `Tab` | Cycle focus through all panels |
-| `j` / `k` or `↑` `↓` | Navigate up/down in focused panel |
-| `PgUp` / `PgDn` | Scroll by 10 items (list) or 5 lines (log) |
+| `/` | Focus **[/]-Search** bar |
+| `Tab` | Cycle focus: Search → Vaults → Items → List → CmdLog → Search |
+| `j` / `k` or `↑` `↓` | Navigate up/down in the focused panel |
+| `PgUp` / `PgDn` | Scroll by 10 items in the list, or 5 entries in the log |
 
-### Actions (from vault list)
+> **Note:** The `[5]-Status` pane is read-only and cannot be focused with `F5` or `Tab`. It updates automatically to reflect running actions, success, or errors.
+
+### Actions (from vault list `[3]`)
 
 | Key | Action |
 |-----|--------|
 | `Enter` / `l` | Open item detail |
 | `u` | Copy username to clipboard |
 | `c` | Copy password to clipboard |
-| `f` | Toggle favorite |
+| `f` | Toggle favorite ★ |
 | `s` | Sync vault with server |
-| `L` | **Lock vault** and return to login |
-| `q` | Lock vault and return to login |
+| `L` | **Lock vault** — runs `bw lock`, logs to Command Log, returns to login |
+| `q` | Lock vault and return to login (no Command Log entry) |
 | `?` | Show help popup |
 
 ### Search
 
-Type `/` from anywhere to focus the search bar. Fuzzy-searches across name, username, and URL. Results update live. `Esc` clears the query and returns focus to the list.
+Type `/` from anywhere on the vault screen to focus the search bar. The fuzzy search runs across item name, username, and URL. Results update live as you type. `Esc` clears the query and returns focus to the list. While the search bar is focused, `j`/`k` and `Enter` navigate and open items without leaving the search bar.
 
 ### Items filter panel `[2]`
 
-Click or navigate with `j`/`k` to filter by type:
+Navigate with `j`/`k` then press `Enter` to apply, or click a filter to apply it immediately:
 
 - All Items
 - ★ Favorites
@@ -140,15 +156,14 @@ Click or navigate with `j`/`k` to filter by type:
 
 | Key | Action |
 |-----|--------|
-| `j` / `k` or `↑` `↓` | Navigate between fields |
-| `PgUp` / `PgDn` | Jump fields faster |
-| `p` | Show / hide selected hidden field |
-| `c` | Copy selected field to clipboard |
+| `j` / `k` or `↑` `↓` or `PgDn` / `PgUp` | Move to next / previous field (one field at a time) |
+| `p` | Toggle show / hide for the selected hidden field |
+| `c` | Copy the selected field to clipboard |
 | `Esc` / `h` | Go back to vault |
 
-**Hidden fields** (password, CVV, SSN, TOTP, etc.) show `●●●●●●●●` until you press `p` while that field is selected. Moving to another field auto-hides it again.
+**Hidden fields** (Password, Card Number, CVV, TOTP, SSN, Passport, License, and custom hidden fields) display `●●●●●●●●` until you press `p` while that field is selected. Navigating away from a field automatically hides it again.
 
-All field types are shown: Name, Type, Username, Password, URL(s), TOTP, Notes, Card fields, Identity fields, and any custom fields.
+All field types are displayed: Name, Type, Username, Password, URL(s), TOTP, Notes, Card fields, Identity fields, and any custom fields.
 
 ---
 
@@ -163,7 +178,7 @@ All field types are shown: Name, Type, Username, Password, URL(s), TOTP, Notes, 
 | Scroll wheel | Scrolls the hovered panel |
 | Click detail field | Selects field |
 | Click same field again | Toggles reveal |
-| Click `←` header (detail) | Go back |
+| Click header row (detail) | Go back to vault |
 
 ---
 
@@ -178,12 +193,9 @@ email = "you@example.com"
 
 # Security
 auto_lock = false
-lock_after_minutes = 15   # only read at startup; edit manually to change
+lock_after_minutes = 15
 
-# Theme — named preset
-theme = "catppuccin"
-
-# Theme — custom colors (inline comments supported)
+# Theme
 [theme]
 accent        = "#cba6f7"   # active borders, cursor, highlights
 inactive      = "#6c7086"   # inactive panel borders
@@ -199,32 +211,27 @@ item_ssh      = "#b4befe"
 item_favorite = "#f9e2af"
 ```
 
-### Built-in theme presets
-
-| Value | Description |
-|-------|-------------|
-| `"default"` | Classic dark blue/cyan |
-| `"catppuccin"` | Catppuccin Macchiato |
-
-To use a preset: `theme = "catppuccin"` (top-level key, not inside `[theme]`).
+All `[theme]` keys are optional — omit any key to keep its built-in default, so you can override only what you want.
 
 ### Auto-lock
 
-Enable **Auto-lock** on the login screen (or set `auto_lock = true` in config).  
-The vault locks automatically after `lock_after_minutes` minutes of inactivity.  
+Enable **Auto-lock** on the login screen (checkbox) or set `auto_lock = true` in `config.toml`.  
+The vault locks automatically after `lock_after_minutes` minutes of inactivity (any keypress resets the timer).  
 To change the timeout, edit `lock_after_minutes` in `config.toml` and restart.
 
 ---
 
 ## Command log `[4]`
 
-Every `bw` CLI call is logged with its result. Session keys are always redacted as `***`. Passwords and sensitive values are shown as `[hidden]`. Scroll with `j`/`k` or `PgUp`/`PgDn` when the log panel is focused.
+Every `bw` CLI call is logged with its result. Session keys are always redacted as `***`. Passwords, TOTP codes, and clipboard values are logged as `[hidden]`. The log keeps the last 50 entries.
+
+Scroll with `j`/`k` (1 entry) or `PgUp`/`PgDn` (5 entries) when the `[4]-Command Log` panel is focused.
 
 ---
 
 ## Clipboard
 
-Clipboard tool is detected automatically at runtime:
+The clipboard tool is detected automatically at runtime:
 
 | Environment | Tool used |
 |-------------|-----------|
@@ -237,17 +244,18 @@ Clipboard tool is detected automatically at runtime:
 ## Keyboard reference card
 
 ```
-LOGIN             VAULT                    DETAIL
-─────────         ──────────────────────   ──────────────
-Tab   field       F1-F5   panel            j/k    field
-Enter login       /       search           p      reveal
-Space toggle      j/k     navigate         c      copy
-                  PgUp/Dn scroll           Esc    back
-                  Enter   detail
-                  u       copy user
-                  c       copy pass
-                  f       favorite
-                  s       sync
-                  L       lock
-                  ?       help
+LOGIN                  VAULT                         DETAIL
+──────────────────     ──────────────────────────    ──────────────────
+Tab    next field      F1-F4  focus panel            j/k    prev/next field
+Enter  login/unlock    /      search                 PgUp/Dn  same as j/k
+Space  toggle check    j/k    navigate               p      toggle reveal
+←→     move cursor     PgUp/Dn scroll (10/5)         c      copy field
+Ctrl+C quit            Enter  open detail            Esc/h  back to vault
+                       u      copy username
+                       c      copy password
+                       f      toggle favorite
+                       s      sync vault
+                       L      lock (logged)
+                       q      lock (silent)
+                       ?      help popup
 ```

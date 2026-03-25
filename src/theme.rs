@@ -1,22 +1,23 @@
 /// theme.rs — Theme system for bytewarden
 ///
-/// Reads [theme] section from ~/.config/bytewarden/config.toml
-/// Falls back to built-in defaults if section is missing.
+/// Reads [theme] section from ~/.config/bytewarden/config.toml.
+/// Falls back to built-in defaults for any key that is missing.
+/// All keys are optional — override only what you want.
 ///
 /// Config format:
 ///   [theme]
-///   accent          = "#00d4d4"
-///   inactive        = "#8c8ca0"
-///   selected_bg     = "#1e3c50"
-///   success         = "#00c896"
-///   error           = "#e05060"
-///   dim             = "#888888"
-///   item_login      = "#5b8fff"
-///   item_card       = "#c060e0"
-///   item_identity   = "#e0b840"
-///   item_note       = "#00c896"
-///   item_ssh        = "#a060e0"
-///   item_favorite   = "#ffc800"
+///   accent          = "#cba6f7"   # active borders, cursor, highlights
+///   inactive        = "#6c7086"   # inactive panel borders
+///   selected_bg     = "#313244"   # selected row background
+///   success         = "#a6e3a1"   # success messages
+///   error           = "#f38ba8"   # error messages
+///   dim             = "#585b70"   # secondary text
+///   item_login      = "#89b4fa"
+///   item_card       = "#cba6f7"
+///   item_identity   = "#f9e2af"
+///   item_note       = "#a6e3a1"
+///   item_ssh        = "#b4befe"
+///   item_favorite   = "#f9e2af"
 
 use ratatui::style::Color;
 
@@ -55,51 +56,19 @@ impl Default for Theme {
     }
 }
 
-/// Built-in Catppuccin Macchiato theme.
-/// Colors from https://github.com/catppuccin/catppuccin
-pub fn catppuccin() -> Theme {
-    Theme {
-        accent:        hex("#cba6f7"), // Mauve
-        inactive:      hex("#a6adc8"), // Subtext0
-        selected_bg:   hex("#313244"), // Surface0
-        success:       hex("#a6e3a1"), // Green
-        error:         hex("#f38ba8"), // Red
-        dim:           hex("#585b70"), // Surface2
-        item_login:    hex("#89b4fa"), // Blue
-        item_card:     hex("#cba6f7"), // Mauve
-        item_identity: hex("#f9e2af"), // Yellow
-        item_note:     hex("#a6e3a1"), // Green
-        item_ssh:      hex("#b4befe"), // Lavender
-        item_favorite: hex("#f9e2af"), // Yellow
-    }
-}
-
-/// Loads the theme from config.toml [theme] section.
-/// Returns Default if file or section missing, or catppuccin if theme = "catppuccin".
+/// Loads the theme from the [theme] section of config.toml.
+/// Returns Theme::default() if the file or section is missing.
+/// Only keys present in the file override the default — all others
+/// keep their default value, so partial configs are valid.
 pub fn load(config_dir: &std::path::Path) -> Theme {
     let file = config_dir.join("config.toml");
     let Ok(text) = std::fs::read_to_string(&file) else {
         return Theme::default();
     };
-
-    // Check for named theme preset first
-    for line in text.lines() {
-        let line = line.trim();
-        if let Some(val) = line.strip_prefix("theme = ") {
-            let name = val.trim().trim_matches('"').to_lowercase();
-            return match name.as_str() {
-                "catppuccin" | "catppuccin-macchiato" => catppuccin(),
-                "default"                             => Theme::default(),
-                _ => parse_theme_section(&text),
-            };
-        }
-    }
-
-    // No preset — try parsing [theme] section
     parse_theme_section(&text)
 }
 
-/// Parses individual color overrides from [theme] section.
+/// Parses individual color overrides from the [theme] section.
 /// Only overrides keys that are present; falls back to default for missing ones.
 fn parse_theme_section(text: &str) -> Theme {
     let mut t = Theme::default();
@@ -112,16 +81,13 @@ fn parse_theme_section(text: &str) -> Theme {
         if !in_theme { continue; }
         if let Some((key, rest)) = line.split_once('=') {
             let key = key.trim();
-            // Extract value between first pair of quotes: accent = "#00d4d4"  # comment
-            // If quoted: extract content between quotes.
-            // If unquoted: take the first word before any whitespace/comment.
             let val = rest.trim();
+            // Support both quoted ("#rrggbb") and unquoted values.
+            // Inline comments after the value are ignored.
             let val = if val.starts_with('"') {
-                // Quoted value — extract between quotes
                 val.trim_start_matches('"')
                    .splitn(2, '"').next().unwrap_or("").trim()
             } else {
-                // Unquoted — take up to first whitespace
                 val.splitn(2, ' ').next().unwrap_or("").trim()
             };
             if val.len() != 7 || !val.starts_with('#') { continue; }
