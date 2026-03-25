@@ -60,71 +60,170 @@ fn draw_login(frame: &mut Frame, app: &mut App) {
     // Plus border top+bottom = 11. Error banner adds 2 more.
     let form_height: u16 = 11 + if app.login_error { 2 } else { 0 };
 
-    let show_logo = area.height >= (9 + 1 + 1 + form_height + 2 + 2);
+    // Full layout: starfield fills everything except bottom bar
+    // Logo text sits in the top portion, form floats in the middle
+    let logo_art_height: u16 = 18; // tighter: gap between rows = 0
+    let show_logo = area.height >= (logo_art_height + form_height + 2 + 2);
 
     let chunks = if show_logo {
         Layout::vertical([
-            Constraint::Length(2),           // top padding
-            Constraint::Length(9),           // logo art
-            Constraint::Length(1),           // title line
-            Constraint::Length(1),           // gap
-            Constraint::Length(form_height), // form
-            Constraint::Min(0),              // fill
-            Constraint::Length(2),           // status bar
+            Constraint::Length(logo_art_height), // figlet text area
+            Constraint::Length(1),               // small gap
+            Constraint::Length(form_height),     // form
+            Constraint::Min(0),                  // fill (starfield continues)
+            Constraint::Length(2),               // command bar
         ])
         .split(area)
     } else {
         Layout::vertical([
-            Constraint::Min(0),              // top fill
-            Constraint::Length(1),           // title line
-            Constraint::Length(1),           // gap
-            Constraint::Length(form_height), // form
-            Constraint::Min(0),              // bottom fill
-            Constraint::Length(2),           // status bar
+            Constraint::Min(0),
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Length(form_height),
+            Constraint::Min(0),
+            Constraint::Length(2),
         ])
         .split(area)
     };
 
-    // With logo:    chunks = [pad, art, title, gap, form, fill, status]
-    // Without logo: chunks = [fill, title, gap, form, fill, status]
     let (logo_chunk, title_chunk, form_chunk, status_chunk) = if show_logo {
-        (Some(chunks[1]), chunks[2], chunks[4], chunks[6])
+        (Some(chunks[0]), chunks[0], chunks[2], chunks[4])
     } else {
         (None, chunks[1], chunks[3], chunks[5])
     };
 
-    // ── ASCII pixel-art shield logo
-    let c  = Style::default().fg(t.accent);
-    // Logo dark inner tone — use selected_bg color (dark, tinted) so it
-    // always harmonizes with the accent regardless of theme
-    let d  = Style::default().fg(t.selected_bg);
-    let bg = Style::default().fg(Color::Rgb(0, 25, 25));
-
+    // ── Star field + logo ─────────────────────────────────────────────────
     if let Some(logo_area) = logo_chunk {
-        let logo_lines: Vec<Line> = vec![
-            Line::from(Span::styled("  ▄████████████▄  ", c)).alignment(Alignment::Center),
-            Line::from(vec![Span::styled("  █", c), Span::styled("  ╔════════╗  ", d), Span::styled("█  ", c)]).alignment(Alignment::Center),
-            Line::from(vec![Span::styled("  █", c), Span::styled("  ║ ", d), Span::styled("┌────┐", c), Span::styled(" ║  ", d), Span::styled("█  ", c)]).alignment(Alignment::Center),
-            Line::from(vec![Span::styled("  █", c), Span::styled("  ║ ", d), Span::styled("│", c), Span::styled("░░░░", bg), Span::styled("│", c), Span::styled(" ║  ", d), Span::styled("█  ", c)]).alignment(Alignment::Center),
-            Line::from(vec![Span::styled("  █", c), Span::styled("  ║ ", d), Span::styled("██████", c), Span::styled(" ║  ", d), Span::styled("█  ", c)]).alignment(Alignment::Center),
-            Line::from(vec![Span::styled("  █", c), Span::styled("  ║ ", d), Span::styled("█", c), Span::styled("░░░░", bg), Span::styled("█", c), Span::styled(" ║  ", d), Span::styled("█  ", c)]).alignment(Alignment::Center),
-            Line::from(vec![Span::styled("  █", c), Span::styled("  ╚════════╝  ", d), Span::styled("█  ", c)]).alignment(Alignment::Center),
-            Line::from(vec![Span::styled("   ▀", c), Span::styled("████████████", d), Span::styled("▀   ", c)]).alignment(Alignment::Center),
-            Line::from(""),
-        ];
-        frame.render_widget(Paragraph::new(logo_lines), logo_area);
-    }
+        let w = logo_area.width as usize;
+        let h = logo_area.height as usize;
 
-    // ── Title line — always visible ────────────────────────────────────────
-    frame.render_widget(
-        Paragraph::new(Line::from(vec![
-            Span::styled("bytewarden", Style::default().fg(t.accent).add_modifier(Modifier::BOLD)),
-            Span::styled(" v0.1.0", Style::default().fg(t.dim)),
-            Span::styled("  —  ", Style::default().fg(Color::Rgb(40, 44, 70))),
-            Span::styled("Bitwarden TUI", Style::default().fg(t.dim)),
-        ])).alignment(Alignment::Center),
-        title_chunk,
-    );
+        let s_dim    = Style::default().fg(Color::Rgb(38, 34, 72));
+        let s_mid    = Style::default().fg(Color::Rgb(90, 84, 148));
+        let s_bright = Style::default().fg(Color::Rgb(185, 178, 248));
+        let acc_dim  = Style::default().fg(t.inactive);
+
+        let (ar, ag, ab) = match t.accent {
+            Color::Rgb(r, g, b) => (r as u16, g as u16, b as u16),
+            _ => (203, 166, 247),
+        };
+        let col_hi  = Style::default().fg(Color::Rgb(
+            ((ar + 255) / 2) as u8, ((ag + 255) / 2) as u8, ((ab + 255) / 2) as u8,
+        ));
+        let col_mid = Style::default().fg(t.accent);
+        let col_lo  = Style::default().fg(Color::Rgb(
+            (ar * 50 / 100) as u8, (ag * 50 / 100) as u8, (ab * 50 / 100) as u8,
+        ));
+
+        // figlet -f mono12 "byte" / "warden" — trimmed (1 blank top, 1 blank bottom)
+        let row1: &[&str] = &[
+            " \u{2584}\u{2584}                                     ",
+            " \u{2588}\u{2588}                    \u{2588}\u{2588}               ",
+            " \u{2588}\u{2588}\u{2584}\u{2588}\u{2588}\u{2588}\u{2584}   \u{2580}\u{2588}\u{2588}  \u{2588}\u{2588}\u{2588}  \u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}    \u{2584}\u{2588}\u{2588}\u{2588}\u{2588}\u{2584}  ",
+            " \u{2588}\u{2588}\u{2580}  \u{2580}\u{2588}\u{2588}   \u{2588}\u{2588}\u{2584} \u{2588}\u{2588}     \u{2588}\u{2588}      \u{2588}\u{2588}\u{2584}\u{2584}\u{2584}\u{2584}\u{2588}\u{2588} ",
+            " \u{2588}\u{2588}    \u{2588}\u{2588}    \u{2588}\u{2588}\u{2588}\u{2588}\u{2580}     \u{2588}\u{2588}      \u{2588}\u{2588}\u{2580}\u{2580}\u{2580}\u{2580}\u{2580}\u{2580} ",
+            " \u{2588}\u{2588}\u{2588}\u{2584}\u{2584}\u{2588}\u{2588}\u{2580}     \u{2588}\u{2588}\u{2588}      \u{2588}\u{2588}\u{2584}\u{2584}\u{2584}   \u{2580}\u{2588}\u{2588}\u{2584}\u{2584}\u{2584}\u{2584}\u{2588} ",
+            " \u{2580}\u{2580} \u{2580}\u{2580}\u{2580}       \u{2588}\u{2588}        \u{2580}\u{2580}\u{2580}\u{2580}     \u{2580}\u{2580}\u{2580}\u{2580}\u{2580}  ",
+            "            \u{2588}\u{2588}\u{2588}                         ",
+        ];
+        let row2: &[&str] = &[
+            "                                     \u{2584}\u{2584}                     ",
+            "                                     \u{2588}\u{2588}                     ",
+            "\u{2588}\u{2588}      \u{2588}\u{2588}  \u{2584}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2584}   \u{2588}\u{2588}\u{2584}\u{2588}\u{2588}\u{2588}\u{2588}   \u{2584}\u{2588}\u{2588}\u{2588}\u{2584}\u{2588}\u{2588}   \u{2584}\u{2588}\u{2588}\u{2588}\u{2588}\u{2584}   \u{2588}\u{2588}\u{2584}\u{2588}\u{2588}\u{2588}\u{2588}\u{2584} ",
+            "\u{2580}\u{2588}  \u{2588}\u{2588}  \u{2588}\u{2580}  \u{2580} \u{2584}\u{2584}\u{2584}\u{2588}\u{2588}   \u{2588}\u{2588}\u{2580}      \u{2588}\u{2588}\u{2580}  \u{2580}\u{2588}\u{2588}  \u{2588}\u{2588}\u{2584}\u{2584}\u{2584}\u{2584}\u{2588}\u{2588}  \u{2588}\u{2588}\u{2580}   \u{2588}\u{2588} ",
+            " \u{2588}\u{2588}\u{2584}\u{2588}\u{2588}\u{2584}\u{2588}\u{2588}  \u{2584}\u{2588}\u{2588}\u{2580}\u{2580}\u{2580}\u{2588}\u{2588}   \u{2588}\u{2588}       \u{2588}\u{2588}    \u{2588}\u{2588}  \u{2588}\u{2588}\u{2580}\u{2580}\u{2580}\u{2580}\u{2580}\u{2580}  \u{2588}\u{2588}    \u{2588}\u{2588} ",
+            " \u{2580}\u{2588}\u{2588}  \u{2588}\u{2588}\u{2580}  \u{2588}\u{2588}\u{2584}\u{2584}\u{2584}\u{2588}\u{2588}\u{2588}   \u{2588}\u{2588}       \u{2580}\u{2588}\u{2588}\u{2584}\u{2584}\u{2588}\u{2588}\u{2588}  \u{2580}\u{2588}\u{2588}\u{2584}\u{2584}\u{2584}\u{2584}\u{2588}  \u{2588}\u{2588}    \u{2588}\u{2588} ",
+            "  \u{2580}\u{2580}  \u{2580}\u{2580}    \u{2580}\u{2580}\u{2580}\u{2580} \u{2580}\u{2580}   \u{2580}\u{2580}         \u{2580}\u{2580}\u{2580} \u{2580}\u{2580}    \u{2580}\u{2580}\u{2580}\u{2580}\u{2580}   \u{2580}\u{2580}    \u{2580}\u{2580} ",
+        ];
+
+        let row1_start = 1usize;
+        let row2_start = row1_start + row1.len(); // no gap — tight
+        let title_row  = row2_start + row2.len();
+        let fig1_w     = 40usize;
+        let fig2_w     = 60usize;
+        let fig1_col   = if w > fig1_w { (w - fig1_w) / 2 } else { 0 };
+        let fig2_col   = if w > fig2_w { (w - fig2_w) / 2 } else { 0 };
+
+        let star_at = |row: usize, col: usize| -> (char, Style) {
+            let hash = row.wrapping_mul(17)
+                .wrapping_add(col.wrapping_mul(31))
+                .wrapping_add(row.wrapping_mul(col)) % 120;
+            match hash {
+                0     => ('\u{2726}', s_bright),
+                1 | 2 => ('\u{00b7}', s_mid),
+                3     => ('\u{22c6}', s_dim),
+                _     => (' ', s_dim),
+            }
+        };
+
+        let render_line = |row: usize, fig: &str, fc: usize, fw: usize,
+                           ri: usize, rh: usize| -> Line<'static> {
+            let tone = match ri {
+                0 | 1            => col_hi,
+                r if r >= rh - 2 => col_lo,
+                _                => col_mid,
+            };
+            let mut spans: Vec<Span<'static>> = Vec::new();
+            let mut cs = s_dim;
+            let mut ct = String::new();
+            for col in 0..w {
+                let fi = col.wrapping_sub(fc);
+                let (ch, st) = if col >= fc && fi < fw {
+                    let c = fig.chars().nth(fi).unwrap_or(' ');
+                    if c != ' ' { (c, tone) } else { star_at(row, col) }
+                } else { star_at(row, col) };
+                if st == cs { ct.push(ch); }
+                else {
+                    if !ct.is_empty() { spans.push(Span::styled(ct.clone(), cs)); ct.clear(); }
+                    cs = st; ct.push(ch);
+                }
+            }
+            if !ct.is_empty() { spans.push(Span::styled(ct, cs)); }
+            Line::from(spans)
+        };
+
+        let pure_stars = |row: usize| -> Line<'static> {
+            let mut spans: Vec<Span<'static>> = Vec::new();
+            let mut cs = s_dim; let mut ct = String::new();
+            for col in 0..w {
+                let (ch, st) = star_at(row, col);
+                if st == cs { ct.push(ch); }
+                else {
+                    if !ct.is_empty() { spans.push(Span::styled(ct.clone(), cs)); ct.clear(); }
+                    cs = st; ct.push(ch);
+                }
+            }
+            if !ct.is_empty() { spans.push(Span::styled(ct, cs)); }
+            Line::from(spans)
+        };
+
+        let mut lines: Vec<Line> = Vec::with_capacity(h);
+        for row in 0..h {
+            if row == title_row {
+                lines.push(Line::from(Span::styled("v0.1.0", acc_dim)).alignment(Alignment::Center));
+                continue;
+            }
+            let r1 = row.wrapping_sub(row1_start);
+            let r2 = row.wrapping_sub(row2_start);
+            if row >= row1_start && r1 < row1.len() {
+                lines.push(render_line(row, row1[r1], fig1_col, fig1_w, r1, row1.len()));
+            } else if row >= row2_start && r2 < row2.len() {
+                lines.push(render_line(row, row2[r2], fig2_col, fig2_w, r2, row2.len()));
+            } else {
+                lines.push(pure_stars(row));
+            }
+        }
+        frame.render_widget(Paragraph::new(lines), logo_area);
+    }
+    // Fallback title when terminal too small for logo
+    if logo_chunk.is_none() {
+        frame.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::styled("bytewarden", Style::default().fg(t.accent).add_modifier(Modifier::BOLD)),
+                Span::styled(" v0.1.0", Style::default().fg(t.inactive)),
+            ])).alignment(Alignment::Center),
+            title_chunk,
+        );
+    }
 
     // Form height: +2 for error banner when shown
 
