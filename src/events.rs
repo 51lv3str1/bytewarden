@@ -1,6 +1,7 @@
 /// events.rs — Keyboard event handling
 
 use crate::app::{App, Focus, LoginField, Screen};
+use crate::app::config;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers,
                         MouseEvent, MouseEventKind, MouseButton};
 
@@ -32,11 +33,16 @@ fn handle_login(app: &mut App, key: KeyEvent) {
             app.active_field = match app.active_field {
                 LoginField::Email     => LoginField::Password,
                 LoginField::Password  => LoginField::SaveEmail,
-                LoginField::SaveEmail => LoginField::Email,
+                LoginField::SaveEmail => LoginField::AutoLock,
+                LoginField::AutoLock  => LoginField::Email,
             };
         }
         KeyCode::Char(' ') if app.active_field == LoginField::SaveEmail => {
             app.toggle_save_email();
+        }
+        KeyCode::Char(' ') if app.active_field == LoginField::AutoLock => {
+            app.auto_lock = !app.auto_lock;
+            config::write_auto_lock(app.auto_lock);
         }
         KeyCode::Enter     => app.attempt_login(),
         KeyCode::Left      => app.cursor_left(),
@@ -46,7 +52,8 @@ fn handle_login(app: &mut App, key: KeyEvent) {
         KeyCode::Delete    => { app.clear_login_error(); app.delete_char_at(); }
         KeyCode::Backspace => { app.clear_login_error(); app.delete_char_before(); }
         KeyCode::Char(c)   => {
-            if app.active_field != LoginField::SaveEmail {
+            if app.active_field != LoginField::SaveEmail
+            && app.active_field != LoginField::AutoLock {
                 app.clear_login_error();
                 app.insert_char(c);
             }
@@ -77,7 +84,12 @@ fn handle_vault(app: &mut App, key: KeyEvent) {
         _ => {}
     }
 
-    // '/' always focuses search (works from any pane)
+    // ── Global: L = lock vault from any panel ─────────────────────────────
+    if let KeyCode::Char('L') = key.code {
+        app.lock_vault();
+        return;
+    }
+
     if key.modifiers == KeyModifiers::NONE {
         if let KeyCode::Char('/') = key.code {
             app.focus_panel(0);
@@ -208,10 +220,13 @@ fn handle_mouse(app: &mut App, mouse: MouseEvent) {
                             app.active_field = LoginField::Email;
                         } else if inner_row < 8 {
                             app.active_field = LoginField::Password;
-                        } else {
+                        } else if inner_row < 10 {
                             app.active_field = LoginField::SaveEmail;
-                            // Clicking checkbox toggles it immediately
                             app.toggle_save_email();
+                        } else {
+                            app.active_field = LoginField::AutoLock;
+                            app.auto_lock = !app.auto_lock;
+                            config::write_auto_lock(app.auto_lock);
                         }
                     }
                 }

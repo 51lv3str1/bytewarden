@@ -10,8 +10,7 @@ crossterm = "0.29.0"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 color-eyre = "0.6"
-# No arboard — we use native clipboard tools per platform:
-# Linux Wayland: wl-copy, Linux Xorg: xclip/xsel, macOS: pbcopy
+figlet-rs = "0.1"
 
 [profile.release]
 codegen-units = 1

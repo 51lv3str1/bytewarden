@@ -63,7 +63,9 @@ fn run_loop(
 
         if event::poll(timeout)? {
             events::handle_events(app)?;
+            app.reset_activity(); // any input resets idle timer
         } else {
+            app.check_auto_lock(); // check on each idle tick
             match &app.action_state {
                 ActionState::Running(_) => app.tick_action(),
                 ActionState::Done(_) | ActionState::Error(_) => {

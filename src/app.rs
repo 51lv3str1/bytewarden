@@ -52,7 +52,7 @@ pub const ITEM_FILTERS: &[ItemFilter] = &[
 ];
 
 #[derive(Debug, PartialEq, Clone)]
-pub enum LoginField { Email, Password, SaveEmail }
+pub enum LoginField { Email, Password, SaveEmail, AutoLock }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ActionState {
@@ -173,6 +173,11 @@ pub struct App {
     pub action_tick:    u8,
     pub pending_action: PendingAction,
 
+    // Auto-lock
+    pub auto_lock:         bool,   // whether auto-lock is enabled
+    pub lock_after_secs:   u64,    // seconds of inactivity before lock (from config)
+    pub last_activity:     std::time::Instant, // reset on every keypress
+
     // Mouse
     pub mouse_areas: MouseAreas,
     pub last_click:  Option<(u16, u16)>,
@@ -201,10 +206,39 @@ impl App {
             cmd_log: Vec::new(), cmd_log_scroll: 0,
             action_state: ActionState::Idle, action_tick: 0,
             pending_action: PendingAction::None,
+            auto_lock: cfg.auto_lock,
+            lock_after_secs: cfg.lock_after_secs,
+            last_activity: std::time::Instant::now(),
             mouse_areas: MouseAreas::default(), last_click: None,
             bw: BwClient::new(),
             theme: crate::theme::load(&config::config_path()),
         }
+    }
+
+    // ── Lock ──────────────────────────────────────────────────────────────
+
+    pub fn lock_vault(&mut self) {
+        self.bw.lock();
+        self.screen = Screen::Login;
+        self.items.clear();
+        self.password_input.clear();
+        self.password_cursor = 0;
+        self.active_field = LoginField::Password;
+        self.push_cmd("bw lock", true, "vault locked");
+        self.set_action(ActionState::Done("Locked ✓".into()));
+    }
+
+    /// Call every tick — locks vault if idle too long
+    pub fn check_auto_lock(&mut self) {
+        if !self.auto_lock { return; }
+        if self.screen != Screen::Vault && self.screen != Screen::Detail { return; }
+        if self.last_activity.elapsed().as_secs() >= self.lock_after_secs {
+            self.lock_vault();
+        }
+    }
+
+    pub fn reset_activity(&mut self) {
+        self.last_activity = std::time::Instant::now();
     }
 
     // ── Navigation ────────────────────────────────────────────────────────
@@ -659,7 +693,7 @@ impl App {
 
     pub fn insert_char(&mut self, c: char) {
         match self.active_field {
-            LoginField::SaveEmail => {}
+            LoginField::SaveEmail | LoginField::AutoLock => {}
             LoginField::Email => {
                 let idx = self.byte_offset(&self.email_input, self.email_cursor);
                 self.email_input.insert(idx, c);
@@ -676,7 +710,7 @@ impl App {
 
     pub fn delete_char_before(&mut self) {
         match self.active_field {
-            LoginField::SaveEmail => {}
+            LoginField::SaveEmail | LoginField::AutoLock => {}
             LoginField::Email => {
                 if self.email_cursor > 0 {
                     let idx = self.byte_offset(&self.email_input, self.email_cursor - 1);
@@ -697,7 +731,7 @@ impl App {
 
     pub fn delete_char_at(&mut self) {
         match self.active_field {
-            LoginField::SaveEmail => {}
+            LoginField::SaveEmail | LoginField::AutoLock => {}
             LoginField::Email => {
                 if self.email_cursor < self.email_input.chars().count() {
                     let idx = self.byte_offset(&self.email_input, self.email_cursor);
@@ -718,7 +752,7 @@ impl App {
         match self.active_field {
             LoginField::Email    => { if self.email_cursor    > 0 { self.email_cursor    -= 1; } }
             LoginField::Password => { if self.password_cursor > 0 { self.password_cursor -= 1; } }
-            LoginField::SaveEmail => {}
+            LoginField::SaveEmail | LoginField::AutoLock => {}
         }
     }
 
@@ -726,7 +760,7 @@ impl App {
         match self.active_field {
             LoginField::Email    => { if self.email_cursor    < self.email_input.chars().count()    { self.email_cursor    += 1; } }
             LoginField::Password => { if self.password_cursor < self.password_input.chars().count() { self.password_cursor += 1; } }
-            LoginField::SaveEmail => {}
+            LoginField::SaveEmail | LoginField::AutoLock => {}
         }
     }
 
@@ -734,7 +768,7 @@ impl App {
         match self.active_field {
             LoginField::Email     => self.email_cursor    = 0,
             LoginField::Password  => self.password_cursor = 0,
-            LoginField::SaveEmail => {}
+            LoginField::SaveEmail | LoginField::AutoLock => {}
         }
     }
 
@@ -742,7 +776,7 @@ impl App {
         match self.active_field {
             LoginField::Email     => self.email_cursor    = self.email_input.chars().count(),
             LoginField::Password  => self.password_cursor = self.password_input.chars().count(),
-            LoginField::SaveEmail => {}
+            LoginField::SaveEmail | LoginField::AutoLock => {}
         }
     }
 
@@ -834,12 +868,18 @@ pub mod config {
     pub fn ensure_dir() { let _ = fs::create_dir_all(config_path()); }
 
     #[derive(Default)]
-    pub struct Config { pub save_email: bool, pub email: Option<String> }
+    pub struct Config {
+        pub save_email:     bool,
+        pub email:          Option<String>,
+        pub auto_lock:      bool,
+        pub lock_after_secs: u64,
+    }
 
     pub fn read() -> Config {
         ensure_dir();
         let mut cfg = Config::default();
         let Ok(text) = fs::read_to_string(config_file()) else { return cfg };
+        cfg.lock_after_secs = 15 * 60; // default 15 min
         for line in text.lines() {
             let line = line.trim();
             if let Some(v) = line.strip_prefix("save_email = ") { cfg.save_email = v.trim() == "true"; }
@@ -847,8 +887,24 @@ pub mod config {
                 let v = v.trim().trim_matches('"').to_string();
                 if !v.is_empty() { cfg.email = Some(v); }
             }
+            else if let Some(v) = line.strip_prefix("auto_lock = ") { cfg.auto_lock = v.trim() == "true"; }
+            else if let Some(v) = line.strip_prefix("lock_after_minutes = ") {
+                if let Ok(mins) = v.trim().parse::<u64>() { cfg.lock_after_secs = mins * 60; }
+            }
         }
         cfg
+    }
+
+    pub fn write_auto_lock(auto_lock: bool) {
+        ensure_dir();
+        let existing = fs::read_to_string(config_file()).unwrap_or_default();
+        let mut lines: Vec<String> = existing.lines()
+            .filter(|l| !l.trim().starts_with("auto_lock ="))
+            .map(|l| l.to_string()).collect();
+        // insert after save_email line
+        let pos = lines.iter().position(|l| l.trim().starts_with("save_email =")).map(|i| i+1).unwrap_or(0);
+        lines.insert(pos, format!("auto_lock = {auto_lock}"));
+        let _ = fs::write(config_file(), lines.join("\n") + "\n");
     }
 
     pub fn write(save_email: bool, email: Option<&str>) {

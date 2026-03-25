@@ -58,26 +58,23 @@ fn draw_login(frame: &mut Frame, app: &mut App) {
 
     // Form content: label(1)+input(3)+label(1)+input(3)+checkbox(1) = 9
     // Plus border top+bottom = 11. Error banner adds 2 more.
-    let form_height: u16 = 11 + if app.login_error { 2 } else { 0 };
+    let form_height: u16 = 12 + if app.login_error { 2 } else { 0 }; // +1 for auto-lock checkbox
 
     // Full layout: starfield fills everything except bottom bar
-    // Logo text sits in the top portion, form floats in the middle
-    let logo_art_height: u16 = 18; // tighter: gap between rows = 0
+    let logo_art_height: u16 = 18;
     let show_logo = area.height >= (logo_art_height + form_height + 2 + 2);
 
     let chunks = if show_logo {
         Layout::vertical([
-            Constraint::Length(logo_art_height), // figlet text area
-            Constraint::Length(1),               // small gap
-            Constraint::Length(form_height),     // form
-            Constraint::Min(0),                  // fill (starfield continues)
+            Constraint::Length(logo_art_height), // figlet text + version
+            Constraint::Length(form_height),     // form immediately below
+            Constraint::Min(0),                  // fill
             Constraint::Length(2),               // command bar
         ])
         .split(area)
     } else {
         Layout::vertical([
             Constraint::Min(0),
-            Constraint::Length(1),
             Constraint::Length(1),
             Constraint::Length(form_height),
             Constraint::Min(0),
@@ -87,9 +84,9 @@ fn draw_login(frame: &mut Frame, app: &mut App) {
     };
 
     let (logo_chunk, title_chunk, form_chunk, status_chunk) = if show_logo {
-        (Some(chunks[0]), chunks[0], chunks[2], chunks[4])
+        (Some(chunks[0]), chunks[0], chunks[1], chunks[3])
     } else {
-        (None, chunks[1], chunks[3], chunks[5])
+        (None, chunks[1], chunks[2], chunks[4])
     };
 
     // ── Star field + logo ─────────────────────────────────────────────────
@@ -102,44 +99,41 @@ fn draw_login(frame: &mut Frame, app: &mut App) {
         let s_bright = Style::default().fg(Color::Rgb(185, 178, 248));
         let acc_dim  = Style::default().fg(t.inactive);
 
-        let (ar, ag, ab) = match t.accent {
-            Color::Rgb(r, g, b) => (r as u16, g as u16, b as u16),
-            _ => (203, 166, 247),
-        };
-        let col_hi  = Style::default().fg(Color::Rgb(
-            ((ar + 255) / 2) as u8, ((ag + 255) / 2) as u8, ((ab + 255) / 2) as u8,
-        ));
+        // Single accent color for the whole wordmark — clean and consistent
+        let col_hi  = Style::default().fg(t.accent);
         let col_mid = Style::default().fg(t.accent);
-        let col_lo  = Style::default().fg(Color::Rgb(
-            (ar * 50 / 100) as u8, (ag * 50 / 100) as u8, (ab * 50 / 100) as u8,
-        ));
+        let col_lo  = Style::default().fg(t.accent);
 
-        // figlet -f mono12 "byte" / "warden" — trimmed (1 blank top, 1 blank bottom)
-        let row1: &[&str] = &[
-            " \u{2584}\u{2584}                                     ",
-            " \u{2588}\u{2588}                    \u{2588}\u{2588}               ",
-            " \u{2588}\u{2588}\u{2584}\u{2588}\u{2588}\u{2588}\u{2584}   \u{2580}\u{2588}\u{2588}  \u{2588}\u{2588}\u{2588}  \u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}    \u{2584}\u{2588}\u{2588}\u{2588}\u{2588}\u{2584}  ",
-            " \u{2588}\u{2588}\u{2580}  \u{2580}\u{2588}\u{2588}   \u{2588}\u{2588}\u{2584} \u{2588}\u{2588}     \u{2588}\u{2588}      \u{2588}\u{2588}\u{2584}\u{2584}\u{2584}\u{2584}\u{2588}\u{2588} ",
-            " \u{2588}\u{2588}    \u{2588}\u{2588}    \u{2588}\u{2588}\u{2588}\u{2588}\u{2580}     \u{2588}\u{2588}      \u{2588}\u{2588}\u{2580}\u{2580}\u{2580}\u{2580}\u{2580}\u{2580} ",
-            " \u{2588}\u{2588}\u{2588}\u{2584}\u{2584}\u{2588}\u{2588}\u{2580}     \u{2588}\u{2588}\u{2588}      \u{2588}\u{2588}\u{2584}\u{2584}\u{2584}   \u{2580}\u{2588}\u{2588}\u{2584}\u{2584}\u{2584}\u{2584}\u{2588} ",
-            " \u{2580}\u{2580} \u{2580}\u{2580}\u{2580}       \u{2588}\u{2588}        \u{2580}\u{2580}\u{2580}\u{2580}     \u{2580}\u{2580}\u{2580}\u{2580}\u{2580}  ",
-            "            \u{2588}\u{2588}\u{2588}                         ",
-        ];
-        let row2: &[&str] = &[
-            "                                     \u{2584}\u{2584}                     ",
-            "                                     \u{2588}\u{2588}                     ",
-            "\u{2588}\u{2588}      \u{2588}\u{2588}  \u{2584}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2584}   \u{2588}\u{2588}\u{2584}\u{2588}\u{2588}\u{2588}\u{2588}   \u{2584}\u{2588}\u{2588}\u{2588}\u{2584}\u{2588}\u{2588}   \u{2584}\u{2588}\u{2588}\u{2588}\u{2588}\u{2584}   \u{2588}\u{2588}\u{2584}\u{2588}\u{2588}\u{2588}\u{2588}\u{2584} ",
-            "\u{2580}\u{2588}  \u{2588}\u{2588}  \u{2588}\u{2580}  \u{2580} \u{2584}\u{2584}\u{2584}\u{2588}\u{2588}   \u{2588}\u{2588}\u{2580}      \u{2588}\u{2588}\u{2580}  \u{2580}\u{2588}\u{2588}  \u{2588}\u{2588}\u{2584}\u{2584}\u{2584}\u{2584}\u{2588}\u{2588}  \u{2588}\u{2588}\u{2580}   \u{2588}\u{2588} ",
-            " \u{2588}\u{2588}\u{2584}\u{2588}\u{2588}\u{2584}\u{2588}\u{2588}  \u{2584}\u{2588}\u{2588}\u{2580}\u{2580}\u{2580}\u{2588}\u{2588}   \u{2588}\u{2588}       \u{2588}\u{2588}    \u{2588}\u{2588}  \u{2588}\u{2588}\u{2580}\u{2580}\u{2580}\u{2580}\u{2580}\u{2580}  \u{2588}\u{2588}    \u{2588}\u{2588} ",
-            " \u{2580}\u{2588}\u{2588}  \u{2588}\u{2588}\u{2580}  \u{2588}\u{2588}\u{2584}\u{2584}\u{2584}\u{2588}\u{2588}\u{2588}   \u{2588}\u{2588}       \u{2580}\u{2588}\u{2588}\u{2584}\u{2584}\u{2588}\u{2588}\u{2588}  \u{2580}\u{2588}\u{2588}\u{2584}\u{2584}\u{2584}\u{2584}\u{2588}  \u{2588}\u{2588}    \u{2588}\u{2588} ",
-            "  \u{2580}\u{2580}  \u{2580}\u{2580}    \u{2580}\u{2580}\u{2580}\u{2580} \u{2580}\u{2580}   \u{2580}\u{2580}         \u{2580}\u{2580}\u{2580} \u{2580}\u{2580}    \u{2580}\u{2580}\u{2580}\u{2580}\u{2580}   \u{2580}\u{2580}    \u{2580}\u{2580} ",
-        ];
+        // Render via bundled slant font using figlet-rs (pure Rust, no system dep)
+        let (fig1_str, fig2_str) = {
+            use figlet_rs::FIGfont;
+            let font_data = include_str!("assets/slant.flf");
+            let font = FIGfont::from_content(font_data)
+                .unwrap_or_else(|_| FIGfont::standard().unwrap());
+            (
+                font.convert("byte").map(|f| f.to_string()).unwrap_or_else(|| "byte".to_string()),
+                font.convert("warden").map(|f| f.to_string()).unwrap_or_else(|| "warden".to_string()),
+            )
+        };
 
+        let trim_lines = |s: &str| -> Vec<String> {
+            let lines: Vec<&str> = s.lines().collect();
+            let start = lines.iter().position(|l| !l.trim().is_empty()).unwrap_or(0);
+            let end   = lines.iter().rposition(|l| !l.trim().is_empty()).map(|i| i+1).unwrap_or(lines.len());
+            lines[start..end].iter().map(|l| l.to_string()).collect()
+        };
+
+        let row1_owned = trim_lines(&fig1_str);
+        let row2_owned = trim_lines(&fig2_str);
+        let row1: Vec<&str> = row1_owned.iter().map(|s| s.as_str()).collect();
+        let row2: Vec<&str> = row2_owned.iter().map(|s| s.as_str()).collect();
         let row1_start = 1usize;
-        let row2_start = row1_start + row1.len(); // no gap — tight
-        let title_row  = row2_start + row2.len();
-        let fig1_w     = 40usize;
-        let fig2_w     = 60usize;
+        let row2_start = row1_start + row1.len();
+        let text_end   = row2_start + row2.len(); // last row of figlet text
+        // Place version halfway between text end and bottom of logo area
+        let title_row  = text_end + (h.saturating_sub(text_end + 1)) / 2;
+        let fig1_w     = row1.iter().map(|l| l.len()).max().unwrap_or(40);
+        let fig2_w     = row2.iter().map(|l| l.len()).max().unwrap_or(60);
         let fig1_col   = if w > fig1_w { (w - fig1_w) / 2 } else { 0 };
         let fig2_col   = if w > fig2_w { (w - fig2_w) / 2 } else { 0 };
 
@@ -253,6 +247,7 @@ fn draw_login(frame: &mut Frame, app: &mut App) {
         Constraint::Length(1),            // password label
         Constraint::Length(3),            // password input
         Constraint::Length(1),            // save email checkbox
+        Constraint::Length(1),            // auto-lock checkbox
         Constraint::Length(error_height), // error banner
     ])
     .split(inner);
@@ -308,22 +303,31 @@ fn draw_login(frame: &mut Frame, app: &mut App) {
     // ── Save email checkbox ───────────────────────────────────────────────
     let checkbox_focused = app.active_field == crate::app::LoginField::SaveEmail;
     let (checkbox_icon, checkbox_color) = if app.save_email {
-        ("☑", t.accent)   // checked → accent (matches theme, not success green)
-    } else {
-        ("☐", t.inactive) // unchecked → inactive gray
-    };
+        ("☑", t.accent) } else { ("☐", t.inactive) };
     let checkbox_label_color = if checkbox_focused { t.accent } else { t.inactive };
     frame.render_widget(
         Paragraph::new(Line::from(vec![
             Span::styled(checkbox_icon, Style::default().fg(checkbox_color)),
             Span::styled(" Save email", Style::default().fg(checkbox_label_color)),
-            if checkbox_focused {
-                Span::styled("  (Space to toggle)", Style::default().fg(t.dim))
-            } else {
-                Span::raw("")
-            },
         ])),
         fields[4],
+    );
+
+    // ── Auto-lock checkbox ────────────────────────────────────────────────
+    let al_focused = app.active_field == crate::app::LoginField::AutoLock;
+    let (al_icon, al_color) = if app.auto_lock {
+        ("☑", t.accent) } else { ("☐", t.inactive) };
+    let al_label_color = if al_focused { t.accent } else { t.inactive };
+    let lock_mins = app.lock_after_secs / 60;
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled(al_icon, Style::default().fg(al_color)),
+            Span::styled(
+                format!(" Auto-lock after {lock_mins} min"),
+                Style::default().fg(al_label_color),
+            ),
+        ])),
+        fields[5],
     );
 
     // ── Error banner ──────────────────────────────────────────────────────
@@ -412,10 +416,11 @@ fn draw_vault(frame: &mut Frame, app: &mut App) {
         ("j/k", "navigate"),
         ("PgUp/Dn", "scroll"),
         ("Enter", "detail"),
-        ("u", "copy user"),
-        ("c", "copy pass"),
+        ("u", "user"),
+        ("c", "pass"),
         ("f", "fav"),
         ("s", "sync"),
+        ("L", "lock"),
         ("?", "help"),
     ];
     let hint_full  = hints.iter().map(|(k, v)| format!("{k}: {v}")).collect::<Vec<_>>().join("  |  ");
