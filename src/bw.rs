@@ -100,6 +100,33 @@ pub struct IdentityData {
     pub country:        Option<String>,
 }
 
+// ── bw status ─────────────────────────────────────────────────────────────
+
+/// Vault state as reported by `bw status`.
+#[derive(Debug, Clone, PartialEq)]
+pub enum VaultStatus {
+    /// Authenticated and decrypted — a live session key exists in the
+    /// environment (`BW_SESSION`). We can skip login entirely.
+    Unlocked,
+    /// Authenticated but locked — email is known, only password is needed.
+    Locked,
+    /// Not authenticated — full login flow required.
+    Unauthenticated,
+}
+
+/// Parsed output of `bw status`.
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub struct BwStatusInfo {
+    pub status:     VaultStatus,
+    /// Set for Locked and Unlocked; None when Unauthenticated.
+    pub user_email: Option<String>,
+    /// ISO-8601 timestamp of last sync; None when Unauthenticated.
+    pub last_sync:  Option<String>,
+    /// The server URL bw is configured against.
+    pub server_url: Option<String>,
+}
+
 // ── BwClient ───────────────────────────────────────────────────────────────
 
 pub struct BwClient {
@@ -111,12 +138,37 @@ impl BwClient {
         BwClient { session_key: None }
     }
 
-    pub fn is_logged_in(&self) -> bool {
-        Command::new("bw")
-            .args(["login", "--check"])
+    /// Calls `bw status` and parses the JSON response.
+    /// Safe to call before any login — never requires a session key.
+    pub fn status(&self) -> Result<BwStatusInfo, String> {
+        let output = Command::new("bw")
+            .args(["status"])
             .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false)
+            .map_err(|e| format!("Could not run bw: {e}"))?;
+
+        let json = String::from_utf8_lossy(&output.stdout);
+        let val: serde_json::Value = serde_json::from_str(&json)
+            .map_err(|e| format!("bw status JSON parse error: {e}"))?;
+
+        let status = match val["status"].as_str().unwrap_or("unauthenticated") {
+            "unlocked" => VaultStatus::Unlocked,
+            "locked"   => VaultStatus::Locked,
+            _          => VaultStatus::Unauthenticated,
+        };
+
+        let user_email = val["userEmail"].as_str()
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string());
+
+        let last_sync = val["lastSync"].as_str()
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string());
+
+        let server_url = val["serverUrl"].as_str()
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string());
+
+        Ok(BwStatusInfo { status, user_email, last_sync, server_url })
     }
 
     pub fn login(&mut self, email: &str, password: &str) -> Result<String, String> {
@@ -310,10 +362,10 @@ impl BwClient {
 pub fn item_type_label(t: u8) -> &'static str {
     match t {
         1 => "Login",
-        2 => "Note",
+        2 => "Secure Note",
         3 => "Card",
         4 => "Identity",
-        5 => "SSH",
+        5 => "SSH Key",
         _ => "Other",
     }
 }

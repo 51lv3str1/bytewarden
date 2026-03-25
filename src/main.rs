@@ -22,6 +22,21 @@ fn main() -> Result<()> {
         // Enable mouse capture
         execute!(std::io::stdout(), EnableMouseCapture)?;
 
+        // Draw the login screen immediately so the user sees the UI at once,
+        // then show a spinner while bw status blocks on its first run.
+        app.set_action(ActionState::Running("Checking session…".into()));
+        terminal.draw(|frame| ui::draw(frame, &mut app))?;
+
+        // Resume from an existing bw session if one is active.
+        // This may take a moment — the spinner above covers the wait.
+        app.resume_from_status();
+
+        // Clear the spinner unless resume already set a new state
+        // (e.g. Done after loading items, or Error if bw not found).
+        if matches!(app.action_state, ActionState::Running(_)) {
+            app.set_action(ActionState::Idle);
+        }
+
         let result = run_loop(terminal, &mut app, &mut done_ticks);
 
         // Always disable mouse on exit
@@ -43,6 +58,7 @@ fn run_loop(
             let pending = app.pending_action.clone();
             app.pending_action = PendingAction::None;
             match pending {
+                PendingAction::Login                      => app.do_login(),
                 PendingAction::CopyUsername              => app.do_copy_username(),
                 PendingAction::CopyPassword              => app.do_copy_password(),
                 PendingAction::SyncVault                 => app.do_sync_vault(),

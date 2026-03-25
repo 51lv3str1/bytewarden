@@ -65,6 +65,7 @@ pub enum ActionState {
 #[derive(Debug, Clone, PartialEq)]
 pub enum PendingAction {
     None,
+    Login,
     CopyUsername,
     CopyPassword,
     SyncVault,
@@ -192,7 +193,7 @@ impl App {
         let cfg          = config::read();
         let saved_email  = cfg.email.unwrap_or_default();
         let email_cursor = saved_email.len();
-        App {
+        let app = App {
             screen: Screen::Login, should_quit: false,
             focus: Focus::List, active_filter: ItemFilter::All, filter_selected: 0,
             items: Vec::new(), selected_index: 0, scroll_offset: 0,
@@ -212,7 +213,88 @@ impl App {
             mouse_areas: MouseAreas::default(), last_click: None,
             bw: BwClient::new(),
             theme: crate::theme::load(&config::config_path()),
+        };
+        app
+    }
+
+    // ── Startup session resume ────────────────────────────────────────────
+
+    /// Called once from main.rs AFTER the terminal is initialized and the
+    /// first login frame has been drawn. This way the user sees the UI
+    /// immediately and the "Checking session…" spinner is visible while
+    /// `bw status` blocks.
+    ///
+    /// - `unlocked`        → `BW_SESSION` is live. Adopt the key, load items,
+    ///                       skip login entirely and go straight to vault.
+    /// - `locked`          → Authenticated but locked. Pre-fill email from
+    ///                       status, focus password field only.
+    /// - `unauthenticated` → Full login flow. Nothing changes from default.
+    ///
+    /// If `bw status` itself fails (bw not on PATH, etc.) we log the error
+    /// to the command log and fall through to the normal login screen.
+    pub fn resume_from_status(&mut self) {
+        let info = match self.bw.status() {
+            Ok(i)  => i,
+            Err(e) => {
+                // bw not reachable — log and stay on login screen
+                self.push_cmd("bw status", false, &e);
+                return;
+            }
+        };
+
+        self.push_cmd("bw status", true, &format!("{:?}", info.status));
+
+        match info.status {
+            crate::bw::VaultStatus::Unlocked => {
+                // The BW_SESSION env var is set and valid.
+                // Read the key directly from the environment so we can
+                // pass it on every subsequent bw call.
+                if let Ok(key) = std::env::var("BW_SESSION") {
+                    if !key.trim().is_empty() {
+                        self.bw.session_key = Some(key.trim().to_string());
+
+                        // Pre-fill email from status if we don't have one saved
+                        if self.email_input.is_empty() {
+                            if let Some(email) = info.user_email {
+                                self.email_cursor = email.len();
+                                self.email_input  = email;
+                            }
+                        }
+
+                        self.push_cmd("bw status", true, "session resumed from BW_SESSION");
+                        self.load_items();
+                        self.go_to_vault();
+                        return;
+                    }
+                }
+                // BW_SESSION missing or empty despite status saying unlocked —
+                // treat as locked so the user can unlock normally.
+                self.apply_locked_state(info.user_email);
+            }
+
+            crate::bw::VaultStatus::Locked => {
+                // Authenticated but needs unlock password.
+                // Pre-fill email so the user only has to enter their password.
+                self.apply_locked_state(info.user_email);
+            }
+
+            crate::bw::VaultStatus::Unauthenticated => {
+                // Nothing to do — default login screen is already correct.
+            }
         }
+    }
+
+    /// Shared setup for the Locked case: pre-fill email and jump straight to
+    /// the password field so the user doesn't have to re-type their address.
+    fn apply_locked_state(&mut self, user_email: Option<String>) {
+        if let Some(email) = user_email {
+            if !email.is_empty() && self.email_input.is_empty() {
+                self.email_cursor = email.len();
+                self.email_input  = email;
+            }
+        }
+        // Jump straight to password — no point editing an email we know
+        self.active_field = LoginField::Password;
     }
 
     // ── Lock ──────────────────────────────────────────────────────────────
@@ -380,15 +462,29 @@ impl App {
 
     // ── Authentication ────────────────────────────────────────────────────
 
+    /// Validates inputs and queues the login action for deferred execution.
+    /// The Running spinner is shown on the next frame before the bw call blocks.
     pub fn attempt_login(&mut self) {
         if self.email_input.trim().is_empty() || self.password_input.is_empty() {
             self.login_error = true;
             return;
         }
+        self.set_action(ActionState::Running("Logging in…".into()));
+        self.pending_action = PendingAction::Login;
+    }
+
+    /// Deferred executor — called from main.rs after the Running frame is drawn.
+    pub fn do_login(&mut self) {
         let email    = self.email_input.clone();
         let password = self.password_input.clone();
 
-        let result = if self.bw.is_logged_in() {
+        // Use status() to decide between unlock and full login.
+        let already_authenticated = matches!(
+            self.bw.status().map(|s| s.status),
+            Ok(crate::bw::VaultStatus::Locked) | Ok(crate::bw::VaultStatus::Unlocked)
+        );
+
+        let result = if already_authenticated {
             self.bw.unlock(&password)
         } else {
             self.bw.login(&email, &password)
@@ -397,11 +493,17 @@ impl App {
         match result {
             Ok(_) => {
                 if self.save_email { config::write(true, Some(&email)); }
+                self.password_input.clear();
+                self.password_cursor = 0;
                 self.load_items();
+                self.set_action(ActionState::Done("Loaded ✓".into()));
                 self.go_to_vault();
             }
             Err(_) => {
                 self.push_cmd("bw auth *** --raw", false, "invalid credentials");
+                // login_error banner handles the UI feedback — no ActionState::Error
+                // needed here as that would produce a duplicate message.
+                self.set_action(ActionState::Idle);
                 self.set_login_error();
             }
         }
@@ -409,6 +511,7 @@ impl App {
 
     pub fn load_items(&mut self) {
         let cmd = format!("bw list items --session {}", self.session_key_display());
+        self.set_action(ActionState::Running("Loading vault…".into()));
         match self.bw.list_items() {
             Ok(items) => {
                 let count = items.len();
@@ -419,7 +522,7 @@ impl App {
             }
             Err(e) => {
                 self.push_cmd(&cmd, false, &e);
-                self.set_status(&format!("Error loading items: {e}"), true);
+                self.set_action(ActionState::Error(format!("Load failed: {e}")));
             }
         }
     }

@@ -56,9 +56,11 @@ fn draw_login(frame: &mut Frame, app: &mut App) {
     let t = &app.theme;
     let area = frame.area();
 
-    // Form content: label(1)+input(3)+label(1)+input(3)+checkbox(1) = 9
-    // Plus border top+bottom = 11. Error banner adds 2 more.
-    let form_height: u16 = 12 + if app.login_error { 2 } else { 0 }; // +1 for auto-lock checkbox
+    // Form content rows:
+    //   padding(1) + email-label(1) + email-input(3) + pass-label(1) + pass-input(3)
+    //   + save-email(1) + auto-lock(1) + feedback-strip(2) + border(2) = 15
+    // feedback-strip is always 2 rows — holds either action feedback or error banner.
+    let form_height: u16 = 15;
 
     // Full layout: starfield fills everything except bottom bar
     let logo_art_height: u16 = 18;
@@ -239,23 +241,22 @@ fn draw_login(frame: &mut Frame, app: &mut App) {
     let inner = block.inner(form_area);
     frame.render_widget(block, form_area);
 
-    let error_height: u16 = if app.login_error { 2 } else { 0 };
-
     let fields = Layout::vertical([
-        Constraint::Length(1),            // email label
-        Constraint::Length(3),            // email input
-        Constraint::Length(1),            // password label
-        Constraint::Length(3),            // password input
-        Constraint::Length(1),            // save email checkbox
-        Constraint::Length(1),            // auto-lock checkbox
-        Constraint::Length(error_height), // error banner
+        Constraint::Length(1),  // [0] top padding — breathing room above email label
+        Constraint::Length(1),  // [1] email label
+        Constraint::Length(3),  // [2] email input
+        Constraint::Length(1),  // [3] password label
+        Constraint::Length(3),  // [4] password input
+        Constraint::Length(1),  // [5] save email checkbox
+        Constraint::Length(1),  // [6] auto-lock checkbox
+        Constraint::Length(2),  // [7] shared feedback / error strip (always 2 rows)
     ])
     .split(inner);
 
     // ── Email field with inline cursor ────────────────────────────────────
     frame.render_widget(
         Paragraph::new("Email:").style(Style::default().fg(t.dim)),
-        fields[0],
+        fields[1],
     );
     let email_focused = app.active_field == LoginField::Email;
     let email_line = input_with_cursor(&app.email_input, app.email_cursor, email_focused, t.accent);
@@ -266,16 +267,15 @@ fn draw_login(frame: &mut Frame, app: &mut App) {
                 .border_type(BorderType::Rounded)
                 .border_style(border_style_themed(email_focused, t.accent)),
         ),
-        fields[1],
+        fields[2],
     );
 
     // ── Password field with inline cursor ────────────────────────────────
     frame.render_widget(
         Paragraph::new("Master Password:").style(Style::default().fg(t.dim)),
-        fields[2],
+        fields[3],
     );
     let pass_focused = app.active_field == LoginField::Password;
-    // Build masked string with cursor
     let masked_before: String = "●".repeat(app.password_cursor);
     let masked_after: String  = "●".repeat(
         app.password_input.chars().count().saturating_sub(app.password_cursor)
@@ -297,7 +297,7 @@ fn draw_login(frame: &mut Frame, app: &mut App) {
                 .border_type(BorderType::Rounded)
                 .border_style(border_style_themed(pass_focused, t.accent)),
         ),
-        fields[3],
+        fields[4],
     );
 
     // ── Save email checkbox ───────────────────────────────────────────────
@@ -310,7 +310,7 @@ fn draw_login(frame: &mut Frame, app: &mut App) {
             Span::styled(checkbox_icon, Style::default().fg(checkbox_color)),
             Span::styled(" Save email", Style::default().fg(checkbox_label_color)),
         ])),
-        fields[4],
+        fields[5],
     );
 
     // ── Auto-lock checkbox ────────────────────────────────────────────────
@@ -327,20 +327,50 @@ fn draw_login(frame: &mut Frame, app: &mut App) {
                 Style::default().fg(al_label_color),
             ),
         ])),
-        fields[5],
+        fields[6],
     );
 
-    // ── Error banner ──────────────────────────────────────────────────────
+    // ── Shared feedback / error strip ─────────────────────────────────────
+    // Error takes priority over action feedback — once credentials fail
+    // the user needs to see the error, not a stale spinner.
+    let spinner_frames = ["-", "\\", "|", "/"];
+    let spinner_idx = (app.action_tick / 3) as usize % spinner_frames.len();
+    let strip_block = Block::default()
+        .borders(Borders::TOP)
+        .border_style(Style::default().fg(Color::Rgb(60, 40, 80)));
     if app.login_error {
         frame.render_widget(
             Paragraph::new(Line::from(vec![
-                Span::styled(" ✕ ", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)),
-                Span::styled("Invalid credentials. Please try again.", Style::default().fg(Color::Red)),
-            ]))
-            .block(Block::default().borders(Borders::TOP)
-                .border_style(Style::default().fg(Color::Rgb(60, 10, 10)))),
-            fields[5],
+                Span::styled(" ✕ ", Style::default().fg(t.error).add_modifier(Modifier::BOLD)),
+                Span::styled("Invalid credentials. Please try again.", Style::default().fg(t.error)),
+            ])).block(strip_block),
+            fields[7],
         );
+    } else {
+        let feedback_line = match &app.action_state {
+            crate::app::ActionState::Running(msg) => Some(Line::from(vec![
+                Span::styled(
+                    format!(" {} ", spinner_frames[spinner_idx]),
+                    Style::default().fg(t.accent).add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(msg.clone(), Style::default().fg(t.accent)),
+            ])),
+            crate::app::ActionState::Done(msg) => Some(Line::from(vec![
+                Span::styled(" ✓ ", Style::default().fg(t.success).add_modifier(Modifier::BOLD)),
+                Span::styled(msg.clone(), Style::default().fg(t.success)),
+            ])),
+            crate::app::ActionState::Error(msg) => Some(Line::from(vec![
+                Span::styled(" ✕ ", Style::default().fg(t.error).add_modifier(Modifier::BOLD)),
+                Span::styled(msg.clone(), Style::default().fg(t.error)),
+            ])),
+            crate::app::ActionState::Idle => None,
+        };
+        if let Some(line) = feedback_line {
+            frame.render_widget(
+                Paragraph::new(line).block(strip_block),
+                fields[7],
+            );
+        }
     }
 
     // Record login form area for mouse hit-testing
@@ -554,11 +584,11 @@ fn draw_vault(frame: &mut Frame, app: &mut App) {
     let filtered = app.filtered_items();
     let list_items: Vec<ListItem> = filtered.iter().map(|item| {
         let type_color = match item.item_type {
-            1 => Color::Blue,
-            2 => Color::Yellow,
-            3 => Color::Magenta,
-            4 => Color::Yellow,
-            5 => Color::Rgb(160, 96, 224),
+            1 => t.item_login,
+            2 => t.item_note,
+            3 => t.item_card,
+            4 => t.item_identity,
+            5 => t.item_ssh,
             _ => t.dim,
         };
         let spans = vec![
@@ -568,9 +598,13 @@ fn draw_vault(frame: &mut Frame, app: &mut App) {
             } else {
                 Span::raw("  ")
             },
-            Span::styled(format!("[{}]  ", item_type_label(item.item_type)), Style::default().fg(type_color)),
+            // Fixed-width tag: "[Secure Note]" is the longest at 13 chars.
+            // Pad to 14 so there is always at least one space before the name.
+            Span::styled(
+                format!("{:<14}", format!("[{}]", item_type_label(item.item_type))),
+                Style::default().fg(type_color),
+            ),
             Span::raw(item.name.as_str()),
-            // Username intentionally not shown — still used for fuzzy search
         ];
         ListItem::new(Line::from(spans))
     }).collect();
