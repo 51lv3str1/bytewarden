@@ -1,9 +1,14 @@
-/// events.rs — Keyboard event handling
+/// events.rs — Keyboard & mouse event handling
+///
+/// Shared navigation helpers at the bottom eliminate repeated
+/// Tab-wrap / clamp / text-input logic across all screens.
 
-use crate::app::{App, Focus, LoginField, Screen};
+use crate::app::{App, Focus, LoginField, Screen, ITEM_FILTERS, CREATE_ITEM_TYPES};
 use crate::app::config;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers,
                         MouseEvent, MouseEventKind, MouseButton};
+
+// ── Public entry point ────────────────────────────────────────────────────
 
 pub fn handle_events(app: &mut App) -> std::io::Result<()> {
     match event::read()? {
@@ -14,11 +19,12 @@ pub fn handle_events(app: &mut App) -> std::io::Result<()> {
                 return Ok(());
             }
             match app.screen.clone() {
-                Screen::Login  => handle_login(app, key),
-                Screen::Vault  => handle_vault(app, key),
-                Screen::Detail => handle_detail(app, key),
-                // Screen::Search removed — search is inline in vault
-                Screen::Help   => { app.go_back(); }
+                Screen::Login         => handle_login(app, key),
+                Screen::Vault         => handle_vault(app, key),
+                Screen::Detail        => handle_detail(app, key),
+                Screen::Help          => { app.go_back(); }
+                Screen::Create        => handle_create(app, key),
+                Screen::ConfirmDelete => handle_confirm_delete(app, key),
             }
         }
         Event::Mouse(mouse) => handle_mouse(app, mouse),
@@ -26,6 +32,8 @@ pub fn handle_events(app: &mut App) -> std::io::Result<()> {
     }
     Ok(())
 }
+
+// ── Login ─────────────────────────────────────────────────────────────────
 
 fn handle_login(app: &mut App, key: KeyEvent) {
     match key.code {
@@ -62,19 +70,10 @@ fn handle_login(app: &mut App, key: KeyEvent) {
     }
 }
 
-fn handle_vault(app: &mut App, key: KeyEvent) {
-    app.clear_status();
+// ── Vault ─────────────────────────────────────────────────────────────────
 
-    // ── F1-F5: jump to panels by index shown on screen ────────────────────
-    // F-keys work reliably in all terminals, no modifier needed,
-    // and never conflict with text input.
-    //   [5]-Status  → F5      [0]-Search → F1 (or /)
-    //   [1]-Vaults  → F1+1    mapped as:
-    // Screen labels:  [5] [0] [1] [2] [3] [4]
-    // F-key mapping:  F5  F1  F2  F3  F4   (F5=status shown at top)
-    // Use the NUMBER shown in brackets: 0=F1 workaround, but simpler:
-    // Map directly: F1=[1]-Vaults, F2=[2]-Items, F3=[3]-Vault,
-    //               F4=[4]-CmdLog, F5=[5]-Status, /=[0]-Search
+fn handle_vault(app: &mut App, key: KeyEvent) {
+
     match key.code {
         KeyCode::F(1) => { app.focus_panel(1); return; }
         KeyCode::F(2) => { app.focus_panel(2); return; }
@@ -84,51 +83,37 @@ fn handle_vault(app: &mut App, key: KeyEvent) {
         _ => {}
     }
 
-    // ── Global: L = lock vault from any panel ─────────────────────────────
-    if let KeyCode::Char('L') = key.code {
+    if key.code == KeyCode::Char('L') {
         app.lock_vault();
         return;
     }
 
-    if key.modifiers == KeyModifiers::NONE {
-        if let KeyCode::Char('/') = key.code {
-            app.focus_panel(0);
-            return;
-        }
+    if key.code == KeyCode::Char('/') && key.modifiers == KeyModifiers::NONE {
+        app.focus_panel(0);
+        return;
     }
 
     match app.focus.clone() {
-        // ── [5]-Status ────────────────────────────────────────────────────
-        Focus::Status => match key.code {
+        Focus::Status | Focus::Vaults => match key.code {
             KeyCode::Tab | KeyCode::Esc => app.cycle_focus(),
             _ => {}
         },
 
-        // ── [1]-Vaults ────────────────────────────────────────────────────
-        Focus::Vaults => match key.code {
-            KeyCode::Tab | KeyCode::Esc => app.cycle_focus(),
-            _ => {}
-        },
-
-        // ── [2]-Items ─────────────────────────────────────────────────────
         Focus::Items => match key.code {
-            KeyCode::Char('j') | KeyCode::Down  => app.filter_move_down(),
-            KeyCode::Char('k') | KeyCode::Up    => app.filter_move_up(),
-            KeyCode::PageDown                    => app.filter_move_down(),
-            KeyCode::PageUp                      => app.filter_move_up(),
-            KeyCode::Enter                       => app.apply_filter(),
-            KeyCode::Tab | KeyCode::Esc          => app.cycle_focus(),
+            KeyCode::Char('j') | KeyCode::Down  | KeyCode::PageDown => app.filter_move_down(),
+            KeyCode::Char('k') | KeyCode::Up    | KeyCode::PageUp   => app.filter_move_up(),
+            KeyCode::Enter                                            => app.apply_filter(),
+            KeyCode::Tab | KeyCode::Esc                              => app.cycle_focus(),
             _ => {}
         },
 
-        // ── [0]-Search ────────────────────────────────────────────────────
         Focus::Search => match key.code {
             KeyCode::Esc       => app.clear_search(),
             KeyCode::Tab       => app.cycle_focus(),
-            KeyCode::Char('j') | KeyCode::Down => app.move_down(),
-            KeyCode::Char('k') | KeyCode::Up   => app.move_up(),
-            KeyCode::PageDown                   => app.move_down_page(),
-            KeyCode::PageUp                     => app.move_up_page(),
+            KeyCode::Char('j') | KeyCode::Down  => app.move_down(),
+            KeyCode::Char('k') | KeyCode::Up    => app.move_up(),
+            KeyCode::PageDown                    => app.move_down_page(),
+            KeyCode::PageUp                      => app.move_up_page(),
             KeyCode::Enter => {
                 if !app.filtered_items().is_empty() {
                     app.screen = Screen::Detail;
@@ -140,7 +125,6 @@ fn handle_vault(app: &mut App, key: KeyEvent) {
             _ => {}
         },
 
-        // ── [3]-Vault (main list) ─────────────────────────────────────────
         Focus::List => match key.code {
             KeyCode::Char('j') | KeyCode::Down  => app.move_down(),
             KeyCode::Char('k') | KeyCode::Up    => app.move_up(),
@@ -152,18 +136,13 @@ fn handle_vault(app: &mut App, key: KeyEvent) {
             KeyCode::Char('c')                   => app.copy_password_to_clipboard(),
             KeyCode::Char('f')                   => app.toggle_favorite(),
             KeyCode::Char('s')                   => app.sync_vault(),
+            KeyCode::Char('n')                   => app.open_create(),
+            KeyCode::Char('D')                   => app.open_confirm_delete(),
             KeyCode::Char('?')                   => app.screen = Screen::Help,
-            KeyCode::Char('q')                   => {
-                app.bw.lock();
-                app.screen = Screen::Login;
-                app.items.clear();
-                app.password_input.clear();
-                app.set_status("Session closed", false);
-            }
+            KeyCode::Char('q')                   => app.lock_vault(),
             _ => {}
         },
 
-        // ── [4]-Command Log ───────────────────────────────────────────────
         Focus::CmdLog => match key.code {
             KeyCode::Char('j') | KeyCode::Down  => app.cmd_log_scroll_up(1),
             KeyCode::Char('k') | KeyCode::Up    => app.cmd_log_scroll_down(1),
@@ -175,163 +154,255 @@ fn handle_vault(app: &mut App, key: KeyEvent) {
     }
 }
 
-fn handle_detail(app: &mut App, key: KeyEvent) {
-    app.clear_status();
-    let field_count = app.detail_field_count();
+// ── Detail ────────────────────────────────────────────────────────────────
 
+fn handle_detail(app: &mut App, key: KeyEvent) {
+
+    if app.edit_mode {
+        let n = app.edit_fields.len();
+        match key.code {
+            KeyCode::Esc     => { app.edit_mode = false; }
+            KeyCode::Enter   => app.queue_save_edit(),
+            KeyCode::Tab     => nav_wrap(&mut app.edit_field_idx, n, 1),
+            KeyCode::BackTab => nav_wrap(&mut app.edit_field_idx, n, -1),
+            KeyCode::Down    => nav_clamp(&mut app.edit_field_idx, n, 1),
+            KeyCode::Up      => nav_clamp(&mut app.edit_field_idx, n, -1),
+            KeyCode::F(2)    => app.edit_toggle_reveal(),
+            _                => text_input_edit(app, key),
+        }
+        return;
+    }
+
+    let n = app.detail_field_count();
     match key.code {
         KeyCode::Esc | KeyCode::Char('h') => {
             app.show_password = false;
             app.detail_field = 0;
             app.go_back();
         }
+        KeyCode::Tab => {
+            app.show_password = false;
+            nav_wrap(&mut app.detail_field, n, 1);
+        }
+        KeyCode::BackTab => {
+            app.show_password = false;
+            nav_wrap(&mut app.detail_field, n, -1);
+        }
         KeyCode::Char('j') | KeyCode::Down | KeyCode::PageDown => {
-            app.show_password = false; // hide when moving away
-            if app.detail_field + 1 < field_count { app.detail_field += 1; }
+            app.show_password = false;
+            nav_clamp(&mut app.detail_field, n, 1);
         }
         KeyCode::Char('k') | KeyCode::Up | KeyCode::PageUp => {
             app.show_password = false;
-            if app.detail_field > 0 { app.detail_field -= 1; }
+            nav_clamp(&mut app.detail_field, n, -1);
         }
-        KeyCode::Char('p') => app.show_password = !app.show_password,
+        KeyCode::F(2)      => app.show_password = !app.show_password,
         KeyCode::Char('c') => app.copy_selected_field(),
+        KeyCode::Char('e') => app.enter_edit_mode(),
+        KeyCode::Char('D') => app.open_confirm_delete(),
         _ => {}
     }
 }
+
+// ── Create ────────────────────────────────────────────────────────────────
+
+fn handle_create(app: &mut App, key: KeyEvent) {
+    if app.create_choosing_type {
+        let n = CREATE_ITEM_TYPES.len();
+        match key.code {
+            KeyCode::Esc                       => app.go_back(),
+            KeyCode::Enter                     => app.create_select_type(),
+            KeyCode::Tab                       => nav_wrap(&mut app.create_type_idx, n, 1),
+            KeyCode::BackTab                   => nav_wrap(&mut app.create_type_idx, n, -1),
+            KeyCode::Char('j') | KeyCode::Down => nav_clamp(&mut app.create_type_idx, n, 1),
+            KeyCode::Char('k') | KeyCode::Up   => nav_clamp(&mut app.create_type_idx, n, -1),
+            _ => {}
+        }
+    } else {
+        let n = app.create_fields.len();
+        match key.code {
+            KeyCode::Esc     => app.go_back(),
+            KeyCode::Enter   => app.queue_create_item(),
+            KeyCode::Tab     => nav_wrap(&mut app.create_field_idx, n, 1),
+            KeyCode::BackTab => nav_wrap(&mut app.create_field_idx, n, -1),
+            KeyCode::Down    => nav_clamp(&mut app.create_field_idx, n, 1),
+            KeyCode::Up      => nav_clamp(&mut app.create_field_idx, n, -1),
+            KeyCode::F(2)    => {
+                if let Some(f) = app.create_fields.get_mut(app.create_field_idx) {
+                    if f.hidden { f.revealed = !f.revealed; }
+                }
+            }
+            _                => text_input_create(app, key),
+        }
+    }
+}
+
+// ── Confirm delete ────────────────────────────────────────────────────────
+
+fn handle_confirm_delete(app: &mut App, key: KeyEvent) {
+    match key.code {
+        KeyCode::Esc | KeyCode::Char('n') => { app.screen = Screen::Vault; }
+        KeyCode::Enter                    => app.queue_delete_item(false),
+        KeyCode::Char('D')                => app.queue_delete_item(true),
+        _ => {}
+    }
+}
+
+// ── Mouse ─────────────────────────────────────────────────────────────────
 
 fn handle_mouse(app: &mut App, mouse: MouseEvent) {
     let col = mouse.column;
     let row = mouse.row;
 
     match mouse.kind {
-        // ── Click ─────────────────────────────────────────────────────────
         MouseEventKind::Down(MouseButton::Left) => {
             app.last_click = Some((col, row));
-
-            // ── Login screen ──────────────────────────────────────────────
-            if app.screen == Screen::Login {
-                if let Some(form) = app.mouse_areas.login {
-                    if col >= form.x && col < form.x + form.width
-                       && row >= form.y && row < form.y + form.height {
-                        let inner_row = row.saturating_sub(form.y + 1);
-                        use crate::app::LoginField;
-                        // email: rows 1-4, password: rows 5-8, checkbox: row 9+
-                        if inner_row < 4 {
-                            app.active_field = LoginField::Email;
-                        } else if inner_row < 8 {
-                            app.active_field = LoginField::Password;
-                        } else if inner_row < 10 {
-                            app.active_field = LoginField::SaveEmail;
-                            app.toggle_save_email();
-                        } else {
-                            app.active_field = LoginField::AutoLock;
-                            app.auto_lock = !app.auto_lock;
-                            config::write_auto_lock(app.auto_lock);
-                        }
-                    }
-                }
-            }
-
-            // ── Vault screen ──────────────────────────────────────────────
-            if app.screen == Screen::Vault {
-                if let Some(focus) = app.mouse_areas.focus_for(col, row) {
-                    app.focus = focus.clone();
-
-                    // List: click selects; second click on same row opens detail
-                    if focus == Focus::List {
-                        if let Some(row_idx) = app.mouse_areas.list_row(row) {
-                            let visible_idx = app.scroll_offset + row_idx;
-                            if visible_idx < app.filtered_items().len() {
-                                if app.selected_index == visible_idx {
-                                    app.go_to_detail();
-                                } else {
-                                    app.selected_index = visible_idx;
-                                }
-                            }
-                        }
-                    }
-
-                    // Items filter: click highlights filter (Enter to apply)
-                    if focus == Focus::Items {
-                        if let Some(row_idx) = app.mouse_areas.items_row(row) {
-                            use crate::app::ITEM_FILTERS;
-                            if row_idx < ITEM_FILTERS.len() {
-                                app.filter_selected = row_idx;
-                                // Apply immediately on click — don't change focus
-                                let filter = ITEM_FILTERS[row_idx].clone();
-                                app.active_filter = filter;
-                                app.selected_index = 0;
-                                app.scroll_offset = 0;
-                                // Keep Items focused so user can click more filters
-                            }
-                        }
-                    }
-                }
-            }
-
-            // ── Detail screen ─────────────────────────────────────────────
-            if app.screen == Screen::Detail {
-                // Click on header (top 2 rows) → go back
-                if row < 2 {
-                    app.show_password = false;
-                    app.detail_field = 0;
-                    app.go_back();
-                    return;
-                }
-                if let Some(detail_area) = app.mouse_areas.detail {
-                    if col >= detail_area.x && col < detail_area.x + detail_area.width
-                       && row >= detail_area.y && row < detail_area.y + detail_area.height {
-                        let rel = row.saturating_sub(detail_area.y);
-                        let field_height = 4u16;
-                        let field_idx = (rel / field_height) as usize;
-                        let total = app.detail_field_count();
-                        if field_idx < total {
-                            if field_idx == app.detail_field {
-                                app.show_password = !app.show_password;
-                            } else {
-                                app.show_password = false;
-                                app.detail_field = field_idx;
-                            }
-                        }
-                    }
-                }
+            match app.screen {
+                Screen::Login  => mouse_login(app, col, row),
+                Screen::Vault  => mouse_vault(app, col, row),
+                Screen::Detail => mouse_detail(app, col, row),
+                _ => {}
             }
         }
-
-        // ── Scroll wheel ──────────────────────────────────────────────────
-        MouseEventKind::ScrollDown => {
-            if app.screen == Screen::Vault {
-                match app.mouse_areas.focus_for(col, row) {
-                    Some(Focus::List) | Some(Focus::Search) | None => app.move_down(),
-                    Some(Focus::Items)  => app.filter_move_down(),
-                    Some(Focus::CmdLog) => app.cmd_log_scroll_up(1),
-                    _ => app.move_down(),
-                }
-            } else if app.screen == Screen::Detail {
-                let total = app.detail_field_count();
-                if app.detail_field + 1 < total {
-                    app.show_password = false;
-                    app.detail_field += 1;
-                }
-            }
-        }
-        MouseEventKind::ScrollUp => {
-            if app.screen == Screen::Vault {
-                match app.mouse_areas.focus_for(col, row) {
-                    Some(Focus::List) | Some(Focus::Search) | None => app.move_up(),
-                    Some(Focus::Items)  => app.filter_move_up(),
-                    Some(Focus::CmdLog) => app.cmd_log_scroll_down(1),
-                    _ => app.move_up(),
-                }
-            } else if app.screen == Screen::Detail {
-                if app.detail_field > 0 {
-                    app.show_password = false;
-                    app.detail_field -= 1;
-                }
-            }
-        }
-
+        MouseEventKind::ScrollDown => mouse_scroll(app, col, row, 1),
+        MouseEventKind::ScrollUp   => mouse_scroll(app, col, row, -1),
         _ => {}
     }
 }
 
+fn mouse_login(app: &mut App, col: u16, row: u16) {
+    let Some(form) = app.mouse_areas.login else { return };
+    if col < form.x || col >= form.x + form.width
+    || row < form.y || row >= form.y + form.height { return; }
+
+    let inner_row = row.saturating_sub(form.y + 1);
+    if inner_row < 4 {
+        app.active_field = LoginField::Email;
+    } else if inner_row < 8 {
+        app.active_field = LoginField::Password;
+    } else if inner_row < 10 {
+        app.active_field = LoginField::SaveEmail;
+        app.toggle_save_email();
+    } else {
+        app.active_field = LoginField::AutoLock;
+        app.auto_lock = !app.auto_lock;
+        config::write_auto_lock(app.auto_lock);
+    }
+}
+
+fn mouse_vault(app: &mut App, col: u16, row: u16) {
+    let Some(focus) = app.mouse_areas.focus_for(col, row) else { return };
+    app.focus = focus.clone();
+
+    if focus == Focus::List {
+        if let Some(row_idx) = app.mouse_areas.list_row(row) {
+            let visible_idx = app.scroll_offset + row_idx;
+            if visible_idx < app.filtered_items().len() {
+                if app.selected_index == visible_idx {
+                    app.go_to_detail();
+                } else {
+                    app.selected_index = visible_idx;
+                }
+            }
+        }
+    }
+
+    if focus == Focus::Items {
+        if let Some(row_idx) = app.mouse_areas.items_row(row) {
+            if row_idx < ITEM_FILTERS.len() {
+                app.filter_selected = row_idx;
+                app.active_filter = ITEM_FILTERS[row_idx].clone();
+                app.selected_index = 0;
+                app.scroll_offset = 0;
+            }
+        }
+    }
+}
+
+fn mouse_detail(app: &mut App, col: u16, row: u16) {
+    if row < 2 {
+        app.show_password = false;
+        app.detail_field = 0;
+        app.go_back();
+        return;
+    }
+    let Some(area) = app.mouse_areas.detail else { return };
+    if col < area.x || col >= area.x + area.width
+    || row < area.y || row >= area.y + area.height { return; }
+
+    let field_idx = (row.saturating_sub(area.y) / 4) as usize;
+    let total = app.detail_field_count();
+    if field_idx < total {
+        if field_idx == app.detail_field {
+            app.show_password = !app.show_password;
+        } else {
+            app.show_password = false;
+            app.detail_field = field_idx;
+        }
+    }
+}
+
+fn mouse_scroll(app: &mut App, col: u16, row: u16, dir: i8) {
+    match app.screen {
+        Screen::Vault => match app.mouse_areas.focus_for(col, row) {
+            Some(Focus::Items)  => if dir > 0 { app.filter_move_down() } else { app.filter_move_up() },
+            Some(Focus::CmdLog) => if dir > 0 { app.cmd_log_scroll_up(1) } else { app.cmd_log_scroll_down(1) },
+            _                   => if dir > 0 { app.move_down() } else { app.move_up() },
+        },
+        Screen::Detail => {
+            let total = app.detail_field_count();
+            if dir > 0 {
+                if app.detail_field + 1 < total { app.show_password = false; app.detail_field += 1; }
+            } else {
+                if app.detail_field > 0 { app.show_password = false; app.detail_field -= 1; }
+            }
+        }
+        _ => {}
+    }
+}
+
+// ── Navigation helpers ────────────────────────────────────────────────────
+
+/// Wrapping navigation — Tab/BackTab. Wraps from last→first and first→last.
+fn nav_wrap(idx: &mut usize, len: usize, dir: i8) {
+    if len == 0 { return; }
+    if dir > 0 { *idx = (*idx + 1) % len; }
+    else       { *idx = (*idx + len - 1) % len; }
+}
+
+/// Clamping navigation — j/k/arrows. Stops at 0 and len-1.
+fn nav_clamp(idx: &mut usize, len: usize, dir: i8) {
+    if len == 0 { return; }
+    if dir > 0 { if *idx + 1 < len { *idx += 1; } }
+    else       { if *idx > 0 { *idx -= 1; } }
+}
+
+// ── Text input helpers ────────────────────────────────────────────────────
+
+/// Cursor + typing keys for the edit form fields.
+fn text_input_edit(app: &mut App, key: KeyEvent) {
+    match key.code {
+        KeyCode::Left      => app.edit_cursor_left(),
+        KeyCode::Right     => app.edit_cursor_right(),
+        KeyCode::Home      => app.edit_cursor_home(),
+        KeyCode::End       => app.edit_cursor_end(),
+        KeyCode::Backspace => app.edit_delete_before(),
+        KeyCode::Delete    => app.edit_delete_at(),
+        KeyCode::Char(c)   => app.edit_insert_char(c),
+        _ => {}
+    }
+}
+
+/// Cursor + typing keys for the create form fields.
+fn text_input_create(app: &mut App, key: KeyEvent) {
+    match key.code {
+        KeyCode::Left      => app.create_cursor_left(),
+        KeyCode::Right     => app.create_cursor_right(),
+        KeyCode::Home      => app.create_cursor_home(),
+        KeyCode::End       => app.create_cursor_end(),
+        KeyCode::Backspace => app.create_delete_before(),
+        KeyCode::Delete    => app.create_delete_at(),
+        KeyCode::Char(c)   => app.create_insert_char(c),
+        _ => {}
+    }
+}

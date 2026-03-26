@@ -77,6 +77,34 @@ cargo build --release
 
 ---
 
+## Session resume
+
+On every startup bytewarden runs `bw status` before showing the login
+screen. Depending on the result it fast-paths the UI:
+
+| `bw status` | What bytewarden does |
+|-------------|----------------------|
+| `unauthenticated` | Normal login screen — enter email and master password. |
+| `locked` | Vault is known but locked. Email is pre-filled, cursor jumps straight to the password field. |
+| `unlocked` | Active session found in `BW_SESSION`. Login screen is skipped entirely — vault loads immediately. |
+
+While `bw status` runs, a `- Checking session…` spinner is shown at the
+bottom of the login form. It disappears once the check completes.
+
+The `unlocked` fast-path requires `BW_SESSION` to be set in the current
+shell environment. The typical workflow is:
+
+```bash
+export BW_SESSION=$(bw unlock --raw)
+bytewarden
+```
+
+If `BW_SESSION` is not set (or the session has expired) despite `bw status`
+reporting `unlocked`, bytewarden falls back to the `locked` path so you can
+unlock normally.
+
+---
+
 ## Login screen
 
 | Action | Key / Input |
@@ -92,6 +120,16 @@ cargo build --release
 The password field is always masked. Email is pre-filled if **Save email** is enabled.
 
 The field cycle order is: **Email → Password → Save email → Auto-lock → Email**.
+
+A feedback strip at the bottom of the form shows the current state:
+
+| State | Appearance |
+|-------|-----------|
+| Checking session | `- Checking session…` (spinner, accent color) |
+| Logging in | `- Logging in…` (spinner, accent color) |
+| Loading vault | `- Loading vault…` (spinner, accent color) |
+| Success | `✓ Loaded ✓` (green) |
+| Invalid credentials | `✕ Invalid credentials. Please try again.` (red) |
 
 ---
 
@@ -157,11 +195,11 @@ Navigate with `j`/`k` then press `Enter` to apply, or click a filter to apply it
 | Key | Action |
 |-----|--------|
 | `j` / `k` or `↑` `↓` or `PgDn` / `PgUp` | Move to next / previous field (one field at a time) |
-| `p` | Toggle show / hide for the selected hidden field |
+| `Ctrl+H` | Toggle show / hide for the selected hidden field |
 | `c` | Copy the selected field to clipboard |
 | `Esc` / `h` | Go back to vault |
 
-**Hidden fields** (Password, Card Number, CVV, TOTP, SSN, Passport, License, and custom hidden fields) display `●●●●●●●●` until you press `p` while that field is selected. Navigating away from a field automatically hides it again.
+**Hidden fields** (Password, Card Number, CVV, TOTP, SSN, Passport, License, and custom hidden fields) display `●●●●●●●●` until you press `Ctrl+H` while that field is selected. Navigating away from a field automatically hides it again.
 
 All field types are displayed: Name, Type, Username, Password, URL(s), TOTP, Notes, Card fields, Identity fields, and any custom fields.
 
@@ -248,7 +286,7 @@ LOGIN                  VAULT                         DETAIL
 ──────────────────     ──────────────────────────    ──────────────────
 Tab    next field      F1-F4  focus panel            j/k    prev/next field
 Enter  login/unlock    /      search                 PgUp/Dn  same as j/k
-Space  toggle check    j/k    navigate               p      toggle reveal
+Space  toggle check    j/k    navigate               ^H     toggle reveal
 ←→     move cursor     PgUp/Dn scroll (10/5)         c      copy field
 Ctrl+C quit            Enter  open detail            Esc/h  back to vault
                        u      copy username
