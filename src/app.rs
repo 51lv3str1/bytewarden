@@ -7,7 +7,7 @@ use std::io::Write;
 // ── Enums ─────────────────────────────────────────────────────────────────
 
 #[derive(Debug, PartialEq, Clone)]
-pub enum Screen { Login, Vault, Detail, Help, Create, ConfirmDelete }
+pub enum Screen { Splash, Login, Vault, Detail, Help, Create, ConfirmDelete }
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum Focus {
@@ -258,7 +258,7 @@ impl App {
         let cfg         = config::read();
         let saved_email = cfg.email.unwrap_or_default();
         App {
-            screen: Screen::Login, should_quit: false,
+            screen: Screen::Splash, should_quit: false,
             focus: Focus::Search, active_filter: ItemFilter::All, filter_selected: 0,
             items: Vec::new(), selected_index: 0, scroll_offset: 0,
             trashed_items: Vec::new(),
@@ -872,14 +872,13 @@ impl App {
                 self.trashed_items.retain(|i| i.id != id);
                 self.push_cmd(&cmd, true, &format!("{name} restored to vault"));
                 self.set_action(ActionState::Done("Restored ✓".into()));
-                // Always return to vault list — detail screen must not persist.
+                // Return to vault list — no reload needed, item was in trash not in items
                 self.screen          = Screen::Vault;
                 self.active_filter   = ItemFilter::All;
                 self.filter_selected = 0;
                 self.selected_index  = 0;
                 self.scroll_offset   = 0;
                 self.focus           = Focus::Search;
-                self.pending_action  = PendingAction::LoadItems;
             }
             Err(e) => self.cmd_err(&cmd, &e, "Restore failed"),
         }

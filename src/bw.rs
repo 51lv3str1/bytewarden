@@ -105,7 +105,9 @@ impl BwClient {
     // ── Auth ──────────────────────────────────────────────────────────────
 
     pub fn status(&self) -> Result<BwStatusInfo, String> {
-        let out = bw_run(&["status"])?;
+        // Use a timeout — bw status should be fast (local only), but Node.js
+        // startup can be slow. If it takes >4 s we fall through to normal login.
+        let out = bw_run_timeout(&["status", "--nointeraction"], 4)?;
         let val: serde_json::Value = serde_json::from_str(&stdout_str(&out))
             .map_err(|e| format!("bw status JSON parse error: {e}"))?;
 
@@ -290,6 +292,40 @@ fn bw_run(args: &[&str]) -> Result<std::process::Output, String> {
         .args(args)
         .output()
         .map_err(|e| format!("Could not run bw: {e}"))
+}
+
+/// Run `bw <args>` with a wall-clock timeout (seconds).
+/// If the process doesn't finish in time it is killed and an error is returned.
+fn bw_run_timeout(args: &[&str], secs: u64) -> Result<std::process::Output, String> {
+    use std::time::{Duration, Instant};
+    use std::io::Read;
+
+    let mut child = Command::new("bw")
+        .args(args)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("Could not run bw: {e}"))?;
+
+    let deadline = Instant::now() + Duration::from_secs(secs);
+    loop {
+        match child.try_wait().map_err(|e| format!("bw wait error: {e}"))? {
+            Some(status) => {
+                let mut stdout = Vec::new();
+                let mut stderr = Vec::new();
+                if let Some(mut o) = child.stdout.take() { let _ = o.read_to_end(&mut stdout); }
+                if let Some(mut e) = child.stderr.take() { let _ = e.read_to_end(&mut stderr); }
+                return Ok(std::process::Output { status, stdout, stderr });
+            }
+            None => {
+                if Instant::now() >= deadline {
+                    let _ = child.kill();
+                    return Err(format!("bw status timed out after {secs}s"));
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+        }
+    }
 }
 
 /// Trimmed stdout as String.

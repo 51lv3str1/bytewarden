@@ -23,6 +23,7 @@ const COLOR_DIM:    Color = Color::DarkGray;
 
 pub fn draw(frame: &mut Frame, app: &mut App) {
     match app.screen {
+        Screen::Splash => draw_splash(frame, app),
         Screen::Login  => draw_login(frame, app),
         Screen::Vault  => draw_vault(frame, app),
         Screen::Detail => draw_detail(frame, app),
@@ -36,6 +37,56 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
 }
 
 // ── Login ─────────────────────────────────────────────────────────────────
+
+// ── Splash screen (shown during bw status check) ──────────────────────────
+
+fn draw_splash(frame: &mut Frame, app: &mut App) {
+    let t    = &app.theme;
+    let area = frame.area();
+
+    // Logo content is ~18 rows tall. Center it vertically (leave room for spinner below).
+    let logo_h: u16 = 18;
+    let top  = area.height.saturating_sub(logo_h + 3) / 2;
+    let logo_area = ratatui::layout::Rect {
+        x: 0, y: top,
+        width:  area.width,
+        height: logo_h.min(area.height.saturating_sub(top)),
+    };
+
+    // Fill rows above and below logo with pure starfield
+    fill_stars(frame, ratatui::layout::Rect { x: 0, y: 0, width: area.width, height: top });
+    render_logo(frame, app, logo_area);
+    let below_y = top + logo_h;
+    if below_y < area.height {
+        fill_stars(frame, ratatui::layout::Rect { x: 0, y: below_y, width: area.width, height: area.height - below_y });
+    }
+
+    // Spinner centered just below logo
+    let sp  = spinner_frame(app.action_tick);
+    let msg = match &app.action_state {
+        ActionState::Running(m) => format!(" {sp}  {m}"),
+        ActionState::Done(m)    => format!(" ✓  {m}"),
+        ActionState::Error(m)   => format!(" ✕  {m}"),
+        ActionState::Idle       => String::new(),
+    };
+    let col = match &app.action_state {
+        ActionState::Running(_) => t.accent,
+        ActionState::Done(_)    => t.success,
+        ActionState::Error(_)   => t.error,
+        ActionState::Idle       => t.dim,
+    };
+    if !msg.is_empty() {
+        let y = (top + logo_h + 1).min(area.height.saturating_sub(1));
+        let w = msg.len() as u16;
+        let x = area.width.saturating_sub(w) / 2;
+        frame.render_widget(
+            Paragraph::new(Span::styled(msg, Style::default().fg(col).add_modifier(Modifier::BOLD))),
+            ratatui::layout::Rect { x, y, width: w, height: 1 },
+        );
+    }
+}
+
+// ── Login screen ──────────────────────────────────────────────────────────
 
 fn draw_login(frame: &mut Frame, app: &mut App) {
     let t = &app.theme;
@@ -143,7 +194,7 @@ fn draw_login(frame: &mut Frame, app: &mut App) {
 
     // Checkboxes
     render_checkbox(frame, "Save email",                app.save_email,  app.active_field == LoginField::SaveEmail, t.accent, t.inactive, f[5]);
-    let lock_label = format!(" Auto-lock after {} min", app.lock_after_secs / 60);
+    let lock_label = format!("Auto-lock after {} min", app.lock_after_secs / 60);
     render_checkbox(frame, &lock_label, app.auto_lock, app.active_field == LoginField::AutoLock, t.accent, t.inactive, f[6]);
 
     // Feedback/error strip
@@ -187,27 +238,31 @@ fn draw_vault(frame: &mut Frame, app: &mut App) {
         Constraint::Length(cmd_h),
     ]).split(body[1]);
 
-    // Keybindings bar — different hints in trash view
-    let (full, short) = if app.is_trash_view() {
-        let h: &[(&str, &str)] = &[
-            ("F1-F4","panel"), ("/","search"), ("j/k","navigate"),
-            ("Enter","detail"), ("r","restore"), ("D","delete"), ("L","lock"), ("?","help"),
-        ];
-        (
-            h.iter().map(|(k,v)| format!("{k}: {v}")).collect::<Vec<_>>().join("  |  "),
-            h.iter().map(|(k,v)| format!("{k}:{v}")).collect::<Vec<_>>().join("  "),
-        )
-    } else {
-        let h: &[(&str, &str)] = &[
-            ("F1-F4","panel"), ("/","search"), ("j/k","navigate"),
-            ("Enter","detail"), ("n","new"), ("u","user"), ("c","pass"),
-            ("f","fav"), ("s","sync"), ("D","delete"), ("L","lock"), ("?","help"),
-        ];
-        (
-            h.iter().map(|(k,v)| format!("{k}: {v}")).collect::<Vec<_>>().join("  |  "),
-            h.iter().map(|(k,v)| format!("{k}:{v}")).collect::<Vec<_>>().join("  "),
-        )
+    // Keybindings bar — dynamic based on focused panel and view context
+    let hints_pairs: &[(&str, &str)] = match app.focus {
+        Focus::Search => &[
+            ("Esc","clear"), ("j/k","navigate"), ("Enter","open detail"), ("type","filter"),
+        ],
+        Focus::Items => &[
+            ("j/k","select filter"), ("Enter","apply"), ("Tab","next panel"),
+        ],
+        Focus::Vaults => &[
+            ("Tab","next panel"),
+        ],
+        Focus::CmdLog => &[
+            ("j/k","scroll"), ("PgUp/Dn","scroll×5"), ("Tab","next panel"),
+        ],
+        Focus::List | Focus::Status => if app.is_trash_view() { &[
+            ("j/k","navigate"), ("Enter","detail"),
+            ("Alt+R","restore"), ("Alt+D","delete"), ("Alt+L","lock"), ("?","help"),
+        ]} else { &[
+            ("j/k","navigate"), ("Enter","detail"),
+            ("Alt+N","new"), ("Alt+U","user"), ("Alt+C","pass"), ("Alt+F","fav"),
+            ("Alt+S","sync"), ("Alt+D","delete"), ("Alt+L","lock"), ("?","help"),
+        ]},
     };
+    let full  = hints_pairs.iter().map(|(k,v)| format!("{k}: {v}")).collect::<Vec<_>>().join("  |  ");
+    let short = hints_pairs.iter().map(|(k,v)| format!("{k}:{v}")).collect::<Vec<_>>().join("  ");
     render_cmd_bar(frame, area, outer[1], &full, &short, t.dim);
 
     // [5] Status pane
@@ -545,11 +600,11 @@ fn draw_detail(frame: &mut Frame, app: &mut App) {
             render_field_card(frame, &field.label, hint, vline, bcol, fas[i], t);
         }
         let (detail_full, detail_short) = if app.is_trash_view() {
-            ("j/k: field  |  F2: show/hide  |  r: restore  |  D: delete permanently  |  Esc: back",
-             "j/k:field  F2:reveal  r:restore  D:del  Esc:back")
+            ("j/k: field  |  F2: show/hide  |  Alt+R: restore  |  Alt+D: delete permanently  |  Esc: back",
+             "j/k:field  F2:reveal  Alt+R:restore  Alt+D:del  Esc:back")
         } else {
-            ("j/k: field  |  F2: show/hide  |  c: copy  |  e: edit  |  D: delete  |  Esc: back",
-             "j/k:field  F2:reveal  c:copy  e:edit  D:del  Esc:back")
+            ("j/k: field  |  F2: show/hide  |  Alt+C: copy  |  Alt+E: edit  |  Alt+D: delete  |  Esc: back",
+             "j/k:field  F2:reveal  Alt+C:copy  Alt+E:edit  Alt+D:del  Esc:back")
         };
         render_cmd_bar(frame, area, chunks[2], detail_full, detail_short, t.dim);
     }
@@ -687,23 +742,23 @@ fn draw_help_popup(frame: &mut Frame, area: Rect) {
         help_line("k / ↑",    "Move up"),
         help_line("Enter / l", "Open detail"),
         help_line("/",         "Search vault"),
-        help_line("n",         "New item"),
-        help_line("u",         "Copy username"),
-        help_line("c",         "Copy password"),
-        help_line("f",         "Toggle favorite ★"),
-        help_line("s",         "Sync vault"),
-        help_line("D",         "Delete item"),
-        help_line("q",         "Lock vault"),
+        help_line("Alt+N",     "New item"),
+        help_line("Alt+U",     "Copy username"),
+        help_line("Alt+C",     "Copy password"),
+        help_line("Alt+F",     "Toggle favorite ★"),
+        help_line("Alt+S",     "Sync vault"),
+        help_line("Alt+D",     "Delete item"),
+        help_line("Alt+Q",     "Lock vault"),
         Line::from(""),
         Line::from(Span::styled("  Trash",  Style::default().fg(COLOR_ACCENT).add_modifier(Modifier::BOLD))),
-        help_line("r",         "Restore item to vault"),
+        help_line("Alt+R",     "Restore item to vault"),
         help_line("D / Enter", "Permanently delete"),
         Line::from(""),
         Line::from(Span::styled("  Detail", Style::default().fg(COLOR_ACCENT).add_modifier(Modifier::BOLD))),
-        help_line("e",         "Edit item"),
+        help_line("Alt+E",     "Edit item"),
         help_line("F2",        "Show / hide hidden field"),
-        help_line("c",         "Copy field"),
-        help_line("D",         "Delete item"),
+        help_line("Alt+C",     "Copy field"),
+        help_line("Alt+D",     "Delete item"),
         help_line("Esc / h",   "Back to vault"),
         Line::from(""),
         Line::from(Span::styled("  Global", Style::default().fg(COLOR_ACCENT).add_modifier(Modifier::BOLD))),
@@ -984,4 +1039,40 @@ fn help_line<'a>(key: &'a str, desc: &'a str) -> Line<'a> {
         Span::styled(format!("{key:<14}"), Style::default().fg(COLOR_ACCENT)),
         Span::styled(desc, Style::default().fg(Color::White)),
     ])
+}
+
+/// Fill a rect with the pure star pattern (no logo text).
+fn fill_stars(frame: &mut Frame, area: Rect) {
+    if area.height == 0 || area.width == 0 { return; }
+    let w = area.width as usize;
+    let h = area.height as usize;
+    let s_dim    = Style::default().fg(Color::Rgb(38, 34, 72));
+    let s_mid    = Style::default().fg(Color::Rgb(90, 84, 148));
+    let s_bright = Style::default().fg(Color::Rgb(185, 178, 248));
+    let star_at = |row: usize, col: usize| -> (char, Style) {
+        let hash = row.wrapping_mul(17).wrapping_add(col.wrapping_mul(31))
+            .wrapping_add(row.wrapping_mul(col)) % 120;
+        match hash {
+            0     => ('\u{2726}', s_bright),
+            1 | 2 => ('\u{00b7}', s_mid),
+            3     => ('\u{22c6}', s_dim),
+            _     => (' ',        s_dim),
+        }
+    };
+    // offset rows by area.y so stars align with the full-screen pattern
+    let lines: Vec<ratatui::text::Line> = (0..h).map(|r| {
+        let row = area.y as usize + r;
+        let mut spans: Vec<Span<'static>> = Vec::new();
+        let mut cs = s_dim; let mut ct = String::new();
+        for col in 0..w {
+            let (ch, st) = star_at(row, col);
+            if st == cs { ct.push(ch); } else {
+                if !ct.is_empty() { spans.push(Span::styled(ct.clone(), cs)); ct.clear(); }
+                cs = st; ct.push(ch);
+            }
+        }
+        if !ct.is_empty() { spans.push(Span::styled(ct, cs)); }
+        ratatui::text::Line::from(spans)
+    }).collect();
+    frame.render_widget(Paragraph::new(lines), area);
 }

@@ -6,7 +6,7 @@ mod events;
 mod theme;
 mod ui;
 
-use app::{ActionState, App, PendingAction};
+use app::{ActionState, App, PendingAction, Screen};
 use color_eyre::Result;
 use crossterm::{event, execute};
 use crossterm::event::{DisableMouseCapture, EnableMouseCapture};
@@ -19,13 +19,17 @@ fn main() -> Result<()> {
         let mut app = App::new();
         execute!(std::io::stdout(), EnableMouseCapture)?;
 
-        // Draw the login frame immediately so the user sees the UI at once,
-        // then block on bw status while the spinner is visible.
+        // Show splash with spinner while bw status runs
         app.set_action(ActionState::Running("Checking session…".into()));
         terminal.draw(|frame| ui::draw(frame, &mut app))?;
+
         app.resume_from_status();
 
-        // Clear the spinner unless resume already set a terminal state.
+        // After status check: if we went straight to vault, stay there.
+        // Otherwise switch to Login and clear the spinner.
+        if app.screen != Screen::Vault {
+            app.screen = Screen::Login;
+        }
         if matches!(app.action_state, ActionState::Running(_)) {
             app.set_action(ActionState::Idle);
         }

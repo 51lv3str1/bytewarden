@@ -10,6 +10,14 @@ use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifier
 
 // ── Public entry point ────────────────────────────────────────────────────
 
+/// Returns true if the key was pressed with Alt (either Left or Right).
+/// Right Alt (AltGr) on Linux = ALT | CONTROL in crossterm.
+/// We accept any modifier set containing ALT.
+#[inline]
+fn is_alt(key: &KeyEvent) -> bool {
+    key.modifiers.contains(KeyModifiers::ALT)
+}
+
 pub fn handle_events(app: &mut App) -> std::io::Result<()> {
     match event::read()? {
         Event::Key(key) => {
@@ -19,6 +27,7 @@ pub fn handle_events(app: &mut App) -> std::io::Result<()> {
                 return Ok(());
             }
             match app.screen.clone() {
+                Screen::Splash        => {} // no input during splash
                 Screen::Login         => handle_login(app, key),
                 Screen::Vault         => handle_vault(app, key),
                 Screen::Detail        => handle_detail(app, key),
@@ -84,7 +93,14 @@ fn handle_vault(app: &mut App, key: KeyEvent) {
         _ => {}
     }
 
-    if key.code == KeyCode::Char('L') {
+    // Alt+S: sync from any panel, never conflicts with text input
+    if key.code == KeyCode::Char('s') && is_alt(&key)
+        && !app.is_trash_view() {
+        app.sync_vault();
+        return;
+    }
+
+    if key.code == KeyCode::Char('l') && is_alt(&key) {
         app.lock_vault();
         return;
     }
@@ -133,17 +149,15 @@ fn handle_vault(app: &mut App, key: KeyEvent) {
             KeyCode::PageUp                      => app.move_up_page(),
             KeyCode::Enter | KeyCode::Char('l') => app.go_to_detail(),
             KeyCode::Tab                         => app.cycle_focus(),
-            KeyCode::Char('D')                   => app.open_confirm_delete(),
             KeyCode::Char('?')                   => app.screen = Screen::Help,
-            KeyCode::Char('q')                   => app.lock_vault(),
-            // Trash-only actions
-            KeyCode::Char('r') if app.is_trash_view() => app.queue_restore_item(),
-            // Normal vault actions (blocked in trash view)
-            KeyCode::Char('u') if !app.is_trash_view() => app.copy_username_to_clipboard(),
-            KeyCode::Char('c') if !app.is_trash_view() => app.copy_password_to_clipboard(),
-            KeyCode::Char('f') if !app.is_trash_view() => app.toggle_favorite(),
-            KeyCode::Char('s') if !app.is_trash_view() => app.sync_vault(),
-            KeyCode::Char('n') if !app.is_trash_view() => app.open_create(),
+            // Alt+ action shortcuts — safe from any panel, no text input conflict
+            KeyCode::Char('q') if is_alt(&key) => app.lock_vault(),
+            KeyCode::Char('d') if is_alt(&key) => app.open_confirm_delete(),
+            KeyCode::Char('r') if is_alt(&key) && app.is_trash_view()  => app.queue_restore_item(),
+            KeyCode::Char('u') if is_alt(&key) && !app.is_trash_view() => app.copy_username_to_clipboard(),
+            KeyCode::Char('c') if is_alt(&key) && !app.is_trash_view() => app.copy_password_to_clipboard(),
+            KeyCode::Char('f') if is_alt(&key) && !app.is_trash_view() => app.toggle_favorite(),
+            KeyCode::Char('n') if is_alt(&key) && !app.is_trash_view() => app.open_create(),
             _ => {}
         },
 
@@ -201,10 +215,10 @@ fn handle_detail(app: &mut App, key: KeyEvent) {
             nav_clamp(&mut app.detail_field, n, -1);
         }
         KeyCode::F(2)      => app.show_password = !app.show_password,
-        KeyCode::Char('c') => app.copy_selected_field(),
-        KeyCode::Char('e') if !app.is_trash_view() => app.enter_edit_mode(),
-        KeyCode::Char('r') if  app.is_trash_view() => app.queue_restore_item(),
-        KeyCode::Char('D') => app.open_confirm_delete(),
+        KeyCode::Char('c') if is_alt(&key) => app.copy_selected_field(),
+        KeyCode::Char('e') if is_alt(&key) && !app.is_trash_view() => app.enter_edit_mode(),
+        KeyCode::Char('r') if is_alt(&key) &&  app.is_trash_view() => app.queue_restore_item(),
+        KeyCode::Char('d') if is_alt(&key) => app.open_confirm_delete(),
         _ => {}
     }
 }
