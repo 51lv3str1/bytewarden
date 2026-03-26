@@ -112,18 +112,29 @@ fn draw_login(frame: &mut Frame, app: &mut App) {
     );
 
     // Password
-    frame.render_widget(Paragraph::new("Master Password:").style(Style::default().fg(t.dim)), f[3]);
+    frame.render_widget(Paragraph::new(Line::from(vec![
+        Span::styled("Master Password:", Style::default().fg(t.dim)),
+        Span::styled("  (F2: reveal)", Style::default().fg(
+            if app.login_password_visible { t.accent } else { t.dim }
+        )),
+    ])), f[3]);
     let pass_foc = app.active_field == LoginField::Password;
-    let masked_before = "●".repeat(app.password_cursor);
-    let masked_after  = "●".repeat(app.password_input.chars().count().saturating_sub(app.password_cursor));
-    let pass_line = if pass_foc {
-        Line::from(vec![
-            Span::raw(masked_before),
-            Span::styled("█", Style::default().fg(t.accent)),
-            Span::raw(masked_after),
-        ])
+    let pass_line = if app.login_password_visible {
+        // Show plain text with cursor
+        input_with_cursor(&app.password_input, app.password_cursor, pass_foc, t.accent)
     } else {
-        Line::from(Span::raw("●".repeat(app.password_input.chars().count())))
+        // Masked
+        let masked_before = "●".repeat(app.password_cursor);
+        let masked_after  = "●".repeat(app.password_input.chars().count().saturating_sub(app.password_cursor));
+        if pass_foc {
+            Line::from(vec![
+                Span::raw(masked_before),
+                Span::styled("█", Style::default().fg(t.accent)),
+                Span::raw(masked_after),
+            ])
+        } else {
+            Line::from(Span::raw("●".repeat(app.password_input.chars().count())))
+        }
     };
     frame.render_widget(
         Paragraph::new(pass_line).block(rounded_block(focus_border(pass_foc, t.accent))),
@@ -152,8 +163,8 @@ fn draw_login(frame: &mut Frame, app: &mut App) {
 
     // Bottom hints bar
     render_cmd_bar(frame, area, bar_chunk,
-        "Tab: field  |  Space: toggle  |  Enter: login  |  ←→: cursor  |  Ctrl+C: quit",
-        "Tab:field  Enter:login  ^C:quit", t.dim);
+        "Tab: field  |  F2: reveal password  |  Space: toggle  |  Enter: login  |  ←→: cursor  |  Ctrl+C: quit",
+        "Tab:field  F2:reveal  Enter:login  ^C:quit", t.dim);
 }
 
 // ── Vault ─────────────────────────────────────────────────────────────────
@@ -176,14 +187,27 @@ fn draw_vault(frame: &mut Frame, app: &mut App) {
         Constraint::Length(cmd_h),
     ]).split(body[1]);
 
-    // Keybindings bar
-    let hints: &[(&str, &str)] = &[
-        ("F1-F4","panel"), ("/","search"), ("j/k","navigate"),
-        ("Enter","detail"), ("n","new"), ("u","user"), ("c","pass"),
-        ("f","fav"), ("s","sync"), ("D","delete"), ("L","lock"), ("?","help"),
-    ];
-    let full  = hints.iter().map(|(k,v)| format!("{k}: {v}")).collect::<Vec<_>>().join("  |  ");
-    let short = hints.iter().map(|(k,v)| format!("{k}:{v}")).collect::<Vec<_>>().join("  ");
+    // Keybindings bar — different hints in trash view
+    let (full, short) = if app.is_trash_view() {
+        let h: &[(&str, &str)] = &[
+            ("F1-F4","panel"), ("/","search"), ("j/k","navigate"),
+            ("Enter","detail"), ("r","restore"), ("D","delete"), ("L","lock"), ("?","help"),
+        ];
+        (
+            h.iter().map(|(k,v)| format!("{k}: {v}")).collect::<Vec<_>>().join("  |  "),
+            h.iter().map(|(k,v)| format!("{k}:{v}")).collect::<Vec<_>>().join("  "),
+        )
+    } else {
+        let h: &[(&str, &str)] = &[
+            ("F1-F4","panel"), ("/","search"), ("j/k","navigate"),
+            ("Enter","detail"), ("n","new"), ("u","user"), ("c","pass"),
+            ("f","fav"), ("s","sync"), ("D","delete"), ("L","lock"), ("?","help"),
+        ];
+        (
+            h.iter().map(|(k,v)| format!("{k}: {v}")).collect::<Vec<_>>().join("  |  "),
+            h.iter().map(|(k,v)| format!("{k}:{v}")).collect::<Vec<_>>().join("  "),
+        )
+    };
     render_cmd_bar(frame, area, outer[1], &full, &short, t.dim);
 
     // [5] Status pane
@@ -231,20 +255,49 @@ fn draw_vault(frame: &mut Frame, app: &mut App) {
             ItemFilter::SecureNote => t.item_note,
             ItemFilter::SshKey     => t.item_ssh,
             ItemFilter::Favorites  => t.item_favorite,
+            ItemFilter::Trash      => t.error,
             ItemFilter::All        => Color::White,
+        };
+        let icon = match f {
+            ItemFilter::All        => "  ",
+            ItemFilter::Favorites  => "★ ",
+            ItemFilter::Login      => "󰌋 ",
+            ItemFilter::Card       => "󰻷 ",
+            ItemFilter::Identity   => "󰀉 ",
+            ItemFilter::SecureNote => "󰎞 ",
+            ItemFilter::SshKey     => "󰣀 ",
+            ItemFilter::Trash      => "󰩺 ",
         };
         let active = *f == app.active_filter;
         let style = if active { Style::default().fg(col).add_modifier(Modifier::BOLD) }
                     else      { Style::default().fg(col) };
         ListItem::new(Line::from(vec![
-            Span::styled(format!("  {}", f.label()), style),
+            Span::styled(format!(" {icon}{}", f.label()), style),
             Span::styled(format!("  {count}"), Style::default().fg(t.dim)),
         ]))
     }).collect();
-    let mut fs = ListState::default(); fs.select(Some(app.filter_selected));
+    // Inject a visual separator before the Trash entry
+    let mut filter_items_with_sep: Vec<ListItem> = Vec::with_capacity(filter_items.len() + 1);
+    for (i, item) in filter_items.into_iter().enumerate() {
+        // Trash is the last entry (index = ITEM_FILTERS.len() - 1)
+        if i == ITEM_FILTERS.len() - 1 {
+            filter_items_with_sep.push(ListItem::new(Line::from(
+                Span::styled("  ─────────────────", Style::default().fg(Color::Rgb(60, 62, 80)))
+            )));
+        }
+        filter_items_with_sep.push(item);
+    }
+    let mut fs = ListState::default();
+    // Offset selection by 1 to account for the separator row before Trash
+    let display_sel = if app.filter_selected == ITEM_FILTERS.len() - 1 {
+        app.filter_selected + 1
+    } else {
+        app.filter_selected
+    };
+    fs.select(Some(display_sel));
     let fi_indicator = format!("{} of {}", app.filter_selected + 1, ITEM_FILTERS.len());
     frame.render_stateful_widget(
-        List::new(filter_items)
+        List::new(filter_items_with_sep)
             .block(titled_block("─[2]-Items", &format!("─{fi_indicator}─"), focus_color(itf, t.accent, t.inactive)))
             .highlight_style(Style::default().bg(t.selected_bg).fg(Color::White))
             .highlight_symbol("▶ "),
@@ -491,10 +544,14 @@ fn draw_detail(frame: &mut Frame, app: &mut App) {
                          else      { Line::from(Span::styled(field.value.as_str(), Style::default().fg(t.inactive))) };
             render_field_card(frame, &field.label, hint, vline, bcol, fas[i], t);
         }
-        render_cmd_bar(frame, area, chunks[2],
-            "j/k: field  |  F2: show/hide  |  c: copy  |  e: edit  |  D: delete  |  Esc: back",
-            "j/k:field  F2:reveal  c:copy  e:edit  D:del  Esc:back",
-            t.dim);
+        let (detail_full, detail_short) = if app.is_trash_view() {
+            ("j/k: field  |  F2: show/hide  |  r: restore  |  D: delete permanently  |  Esc: back",
+             "j/k:field  F2:reveal  r:restore  D:del  Esc:back")
+        } else {
+            ("j/k: field  |  F2: show/hide  |  c: copy  |  e: edit  |  D: delete  |  Esc: back",
+             "j/k:field  F2:reveal  c:copy  e:edit  D:del  Esc:back")
+        };
+        render_cmd_bar(frame, area, chunks[2], detail_full, detail_short, t.dim);
     }
 }
 
@@ -571,21 +628,42 @@ fn draw_confirm_delete_popup(frame: &mut Frame, area: Rect, app: &App) {
     let name = app.selected_item().map(|i| i.name.as_str()).unwrap_or("this item");
     let popup = center_rect(50, 10, area);
     frame.render_widget(Clear, popup);
-    frame.render_widget(
-        Paragraph::new(vec![
+
+    // In trash view: Enter = permanent delete (already trashed, no second trash)
+    // In vault view: Enter = trash, D = permanent
+    let lines = if app.is_trash_view() {
+        vec![
             Line::from(""),
             Line::from(vec![
-                Span::styled("  Delete: ",  Style::default().fg(t.inactive)),
-                Span::styled(name,          Style::default().fg(t.accent).add_modifier(Modifier::BOLD)),
+                Span::styled("  Delete: ", Style::default().fg(t.inactive)),
+                Span::styled(name,         Style::default().fg(t.accent).add_modifier(Modifier::BOLD)),
+            ]),
+            Line::from(""),
+            Line::from(Span::styled("  Already in trash — this will delete permanently.", Style::default().fg(t.dim))),
+            Line::from(""),
+            Line::from(vec![Span::styled("  Enter", Style::default().fg(t.error).add_modifier(Modifier::BOLD)), Span::styled("  Delete permanently", Style::default().fg(t.error))]),
+            Line::from(vec![Span::styled("  Esc  ", Style::default().fg(t.dim)),                                 Span::styled("  Cancel",             Style::default().fg(t.dim))]),
+            Line::from(""),
+        ]
+    } else {
+        vec![
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("  Delete: ", Style::default().fg(t.inactive)),
+                Span::styled(name,         Style::default().fg(t.accent).add_modifier(Modifier::BOLD)),
             ]),
             Line::from(""),
             Line::from(Span::styled("  This action cannot be easily undone.", Style::default().fg(t.dim))),
             Line::from(""),
-            Line::from(vec![Span::styled("  Enter", Style::default().fg(t.accent).add_modifier(Modifier::BOLD)), Span::styled("  Move to trash",       Style::default().fg(Color::White))]),
-            Line::from(vec![Span::styled("  D    ", Style::default().fg(t.error).add_modifier(Modifier::BOLD)),  Span::styled("  Delete permanently",   Style::default().fg(t.error))]),
-            Line::from(vec![Span::styled("  Esc  ", Style::default().fg(t.dim)),                                  Span::styled("  Cancel",               Style::default().fg(t.dim))]),
+            Line::from(vec![Span::styled("  Enter", Style::default().fg(t.accent).add_modifier(Modifier::BOLD)), Span::styled("  Move to trash",      Style::default().fg(Color::White))]),
+            Line::from(vec![Span::styled("  D    ", Style::default().fg(t.error).add_modifier(Modifier::BOLD)),  Span::styled("  Delete permanently", Style::default().fg(t.error))]),
+            Line::from(vec![Span::styled("  Esc  ", Style::default().fg(t.dim)),                                  Span::styled("  Cancel",             Style::default().fg(t.dim))]),
             Line::from(""),
-        ]).block(Block::default().title(" Confirm Delete ")
+        ]
+    };
+
+    frame.render_widget(
+        Paragraph::new(lines).block(Block::default().title(" Confirm Delete ")
             .borders(Borders::ALL).border_type(BorderType::Double)
             .border_style(Style::default().fg(t.error))),
         popup,
@@ -595,13 +673,18 @@ fn draw_confirm_delete_popup(frame: &mut Frame, area: Rect, app: &App) {
 // ── Help popup ────────────────────────────────────────────────────────────
 
 fn draw_help_popup(frame: &mut Frame, area: Rect) {
-    let popup = center_rect(60, 24, area);
+    let popup = center_rect(60, 32, area);
     frame.render_widget(Clear, popup);
     let lines = vec![
         Line::from(""),
+        Line::from(Span::styled("  Login",  Style::default().fg(COLOR_ACCENT).add_modifier(Modifier::BOLD))),
+        help_line("Tab",       "Cycle fields"),
+        help_line("F2",        "Reveal / hide master password"),
+        help_line("Enter",     "Login / Unlock"),
+        Line::from(""),
         Line::from(Span::styled("  Vault",  Style::default().fg(COLOR_ACCENT).add_modifier(Modifier::BOLD))),
-        help_line("j / ↓",     "Move down"),
-        help_line("k / ↑",     "Move up"),
+        help_line("j / ↓",    "Move down"),
+        help_line("k / ↑",    "Move up"),
         help_line("Enter / l", "Open detail"),
         help_line("/",         "Search vault"),
         help_line("n",         "New item"),
@@ -609,8 +692,12 @@ fn draw_help_popup(frame: &mut Frame, area: Rect) {
         help_line("c",         "Copy password"),
         help_line("f",         "Toggle favorite ★"),
         help_line("s",         "Sync vault"),
-        help_line("D",         "Delete selected item"),
-        help_line("q",         "Lock and go to login"),
+        help_line("D",         "Delete item"),
+        help_line("q",         "Lock vault"),
+        Line::from(""),
+        Line::from(Span::styled("  Trash",  Style::default().fg(COLOR_ACCENT).add_modifier(Modifier::BOLD))),
+        help_line("r",         "Restore item to vault"),
+        help_line("D / Enter", "Permanently delete"),
         Line::from(""),
         Line::from(Span::styled("  Detail", Style::default().fg(COLOR_ACCENT).add_modifier(Modifier::BOLD))),
         help_line("e",         "Edit item"),

@@ -3,7 +3,7 @@
 /// Shared navigation helpers at the bottom eliminate repeated
 /// Tab-wrap / clamp / text-input logic across all screens.
 
-use crate::app::{App, Focus, LoginField, Screen, ITEM_FILTERS, CREATE_ITEM_TYPES};
+use crate::app::{App, Focus, LoginField, Screen, ITEM_FILTERS, CREATE_ITEM_TYPES, ItemFilter};
 use crate::app::config;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers,
                         MouseEvent, MouseEventKind, MouseButton};
@@ -53,6 +53,7 @@ fn handle_login(app: &mut App, key: KeyEvent) {
             config::write_auto_lock(app.auto_lock);
         }
         KeyCode::Enter     => app.attempt_login(),
+        KeyCode::F(2)      => app.login_password_visible = !app.login_password_visible,
         KeyCode::Left      => app.cursor_left(),
         KeyCode::Right     => app.cursor_right(),
         KeyCode::Home      => app.cursor_home(),
@@ -132,14 +133,17 @@ fn handle_vault(app: &mut App, key: KeyEvent) {
             KeyCode::PageUp                      => app.move_up_page(),
             KeyCode::Enter | KeyCode::Char('l') => app.go_to_detail(),
             KeyCode::Tab                         => app.cycle_focus(),
-            KeyCode::Char('u')                   => app.copy_username_to_clipboard(),
-            KeyCode::Char('c')                   => app.copy_password_to_clipboard(),
-            KeyCode::Char('f')                   => app.toggle_favorite(),
-            KeyCode::Char('s')                   => app.sync_vault(),
-            KeyCode::Char('n')                   => app.open_create(),
             KeyCode::Char('D')                   => app.open_confirm_delete(),
             KeyCode::Char('?')                   => app.screen = Screen::Help,
             KeyCode::Char('q')                   => app.lock_vault(),
+            // Trash-only actions
+            KeyCode::Char('r') if app.is_trash_view() => app.queue_restore_item(),
+            // Normal vault actions (blocked in trash view)
+            KeyCode::Char('u') if !app.is_trash_view() => app.copy_username_to_clipboard(),
+            KeyCode::Char('c') if !app.is_trash_view() => app.copy_password_to_clipboard(),
+            KeyCode::Char('f') if !app.is_trash_view() => app.toggle_favorite(),
+            KeyCode::Char('s') if !app.is_trash_view() => app.sync_vault(),
+            KeyCode::Char('n') if !app.is_trash_view() => app.open_create(),
             _ => {}
         },
 
@@ -198,7 +202,8 @@ fn handle_detail(app: &mut App, key: KeyEvent) {
         }
         KeyCode::F(2)      => app.show_password = !app.show_password,
         KeyCode::Char('c') => app.copy_selected_field(),
-        KeyCode::Char('e') => app.enter_edit_mode(),
+        KeyCode::Char('e') if !app.is_trash_view() => app.enter_edit_mode(),
+        KeyCode::Char('r') if  app.is_trash_view() => app.queue_restore_item(),
         KeyCode::Char('D') => app.open_confirm_delete(),
         _ => {}
     }
@@ -242,8 +247,9 @@ fn handle_create(app: &mut App, key: KeyEvent) {
 fn handle_confirm_delete(app: &mut App, key: KeyEvent) {
     match key.code {
         KeyCode::Esc | KeyCode::Char('n') => { app.screen = Screen::Vault; }
-        KeyCode::Enter                    => app.queue_delete_item(false),
-        KeyCode::Char('D')                => app.queue_delete_item(true),
+        // In trash view Enter = permanent (already trashed); in vault Enter = trash
+        KeyCode::Enter => app.queue_delete_item(app.is_trash_view()),
+        KeyCode::Char('D') if !app.is_trash_view() => app.queue_delete_item(true),
         _ => {}
     }
 }
@@ -309,11 +315,23 @@ fn mouse_vault(app: &mut App, col: u16, row: u16) {
 
     if focus == Focus::Items {
         if let Some(row_idx) = app.mouse_areas.items_row(row) {
-            if row_idx < ITEM_FILTERS.len() {
-                app.filter_selected = row_idx;
-                app.active_filter = ITEM_FILTERS[row_idx].clone();
+            // Separator is injected before Trash (last filter), so rows after SSH Key are +1
+            let trash_display_row = ITEM_FILTERS.len(); // separator row is len-1, trash is len
+            let filter_idx = if row_idx >= trash_display_row {
+                ITEM_FILTERS.len() - 1 // Trash
+            } else if row_idx == ITEM_FILTERS.len() - 1 {
+                return; // clicked the separator — do nothing
+            } else {
+                row_idx
+            };
+            if filter_idx < ITEM_FILTERS.len() {
+                app.filter_selected = filter_idx;
+                app.active_filter = ITEM_FILTERS[filter_idx].clone();
                 app.selected_index = 0;
                 app.scroll_offset = 0;
+                if app.active_filter == ItemFilter::Trash {
+                    app.pending_action = crate::app::PendingAction::LoadTrash;
+                }
             }
         }
     }

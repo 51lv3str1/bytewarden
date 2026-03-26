@@ -16,7 +16,7 @@ pub enum Focus {
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum ItemFilter {
-    All, Favorites, Login, Card, Identity, SecureNote, SshKey,
+    All, Favorites, Login, Card, Identity, SecureNote, SshKey, Trash,
 }
 
 impl ItemFilter {
@@ -29,6 +29,7 @@ impl ItemFilter {
             ItemFilter::Identity   => "Identity",
             ItemFilter::SecureNote => "Secure Note",
             ItemFilter::SshKey     => "SSH Key",
+            ItemFilter::Trash      => "Trash",
         }
     }
     pub fn type_id(&self) -> Option<u8> {
@@ -45,7 +46,8 @@ impl ItemFilter {
 
 pub const ITEM_FILTERS: &[ItemFilter] = &[
     ItemFilter::All, ItemFilter::Favorites, ItemFilter::Login,
-    ItemFilter::Card, ItemFilter::Identity, ItemFilter::SecureNote, ItemFilter::SshKey,
+    ItemFilter::Card, ItemFilter::Identity, ItemFilter::SecureNote,
+    ItemFilter::SshKey, ItemFilter::Trash,
 ];
 
 #[derive(Debug, PartialEq, Clone)]
@@ -67,6 +69,9 @@ pub enum PendingAction {
     SaveEdit,
     CreateItem,
     DeleteItem { permanent: bool },
+    RestoreItem,
+    LoadTrash,
+    LoadItems,
 }
 
 // ── Supporting structs ────────────────────────────────────────────────────
@@ -201,6 +206,8 @@ pub struct App {
     pub items:          Vec<Item>,
     pub selected_index: usize,
     pub scroll_offset:  usize,
+    /// Items currently in trash — loaded on demand when Trash filter is selected.
+    pub trashed_items:  Vec<Item>,
 
     pub email_input:     String,
     pub email_cursor:    usize,
@@ -212,8 +219,10 @@ pub struct App {
 
     pub search_query: String,
 
-    pub show_password: bool,
-    pub detail_field:  usize,
+    pub show_password:          bool,
+    pub detail_field:           usize,
+    /// Whether the master password on the login screen is shown in plain text.
+    pub login_password_visible: bool,
 
     pub cmd_log:        Vec<CmdEntry>,
     pub cmd_log_scroll: usize,
@@ -250,14 +259,15 @@ impl App {
         let saved_email = cfg.email.unwrap_or_default();
         App {
             screen: Screen::Login, should_quit: false,
-            focus: Focus::List, active_filter: ItemFilter::All, filter_selected: 0,
+            focus: Focus::Search, active_filter: ItemFilter::All, filter_selected: 0,
             items: Vec::new(), selected_index: 0, scroll_offset: 0,
+            trashed_items: Vec::new(),
             email_input: saved_email.clone(), email_cursor: saved_email.len(),
             password_input: String::new(), password_cursor: 0,
             active_field: if cfg.save_email { LoginField::Password } else { LoginField::Email },
             login_error: false, save_email: cfg.save_email,
             search_query: String::new(),
-            show_password: false, detail_field: 0,
+            show_password: false, detail_field: 0, login_password_visible: false,
             cmd_log: Vec::new(), cmd_log_scroll: 0,
             action_state: ActionState::Idle, action_tick: 0,
             pending_action: PendingAction::None,
@@ -346,7 +356,7 @@ impl App {
         self.screen = Screen::Vault;
         self.selected_index = 0;
         self.scroll_offset = 0;
-        self.focus = Focus::List;
+        self.focus = Focus::Search;
     }
 
     pub fn go_to_detail(&mut self) {
@@ -406,6 +416,10 @@ impl App {
         self.selected_index = 0;
         self.scroll_offset  = 0;
         self.focus          = Focus::List;
+        // Load trash items on demand when switching to trash view
+        if self.active_filter == ItemFilter::Trash {
+            self.pending_action = PendingAction::LoadTrash;
+        }
     }
 
     // ── List navigation ───────────────────────────────────────────────────
@@ -429,11 +443,17 @@ impl App {
     // ── Vault data ────────────────────────────────────────────────────────
 
     pub fn filtered_items(&self) -> Vec<&Item> {
-        let base: Vec<&Item> = self.items.iter().filter(|item| match &self.active_filter {
-            ItemFilter::All       => true,
-            ItemFilter::Favorites => item.favorite,
-            f                     => f.type_id() == Some(item.item_type),
-        }).collect();
+        // Trash filter shows trashed_items, all other filters show vault items
+        let base: Vec<&Item> = if self.active_filter == ItemFilter::Trash {
+            self.trashed_items.iter().collect()
+        } else {
+            self.items.iter().filter(|item| match &self.active_filter {
+                ItemFilter::All       => true,
+                ItemFilter::Favorites => item.favorite,
+                ItemFilter::Trash     => false, // handled above
+                f                     => f.type_id() == Some(item.item_type),
+            }).collect()
+        };
 
         if self.search_query.is_empty() { return base; }
 
@@ -453,6 +473,7 @@ impl App {
         match filter {
             ItemFilter::All       => self.items.len(),
             ItemFilter::Favorites => self.items.iter().filter(|i| i.favorite).count(),
+            ItemFilter::Trash     => self.trashed_items.len(),
             f                     => self.items.iter().filter(|i| f.type_id() == Some(i.item_type)).count(),
         }
     }
@@ -809,12 +830,63 @@ impl App {
                 let label = if permanent { "deleted permanently" } else { "moved to trash" };
                 self.push_cmd(&cmd, true, &format!("{name} {label}"));
                 self.set_action(ActionState::Done(if permanent { "Deleted ✓".into() } else { "Trashed ✓".into() }));
+                // Reload only the trash list — no need for a full vault sync
+                self.pending_action = PendingAction::LoadTrash;
             }
             Err(e) => self.cmd_err(&cmd, &e, "Delete failed"),
         }
     }
 
-    // ── Detail field count ────────────────────────────────────────────────
+    // ── Trash ─────────────────────────────────────────────────────────────
+
+    /// Loads trashed items from bw — called when Trash filter is selected.
+    pub fn load_trash(&mut self) {
+        let cmd = format!("bw list items --trash --session {}", self.session_key_display());
+        self.set_action(ActionState::Running("Loading trash…".into()));
+        match self.bw.list_trash() {
+            Ok(items) => {
+                let count = items.len();
+                let mut sorted = items;
+                sorted.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+                self.trashed_items = sorted;
+                self.push_cmd(&cmd, true, &format!("{count} trashed items loaded"));
+                self.set_action(ActionState::Idle);
+            }
+            Err(e) => self.cmd_err(&cmd, &e, "Load trash failed"),
+        }
+    }
+
+    pub fn queue_restore_item(&mut self) {
+        if self.selected_item().is_some() {
+            self.set_action(ActionState::Running("Restoring…".into()));
+            self.pending_action = PendingAction::RestoreItem;
+        }
+    }
+
+    pub fn do_restore_item(&mut self) {
+        let Some(item) = self.selected_item() else { return };
+        let (id, name) = (item.id.clone(), item.name.clone());
+        let cmd = format!("bw restore item {id} --session {}", self.session_key_display());
+        match self.bw.restore_item(&id) {
+            Ok(()) => {
+                self.trashed_items.retain(|i| i.id != id);
+                self.push_cmd(&cmd, true, &format!("{name} restored to vault"));
+                self.set_action(ActionState::Done("Restored ✓".into()));
+                // Always return to vault list — detail screen must not persist.
+                self.screen          = Screen::Vault;
+                self.active_filter   = ItemFilter::All;
+                self.filter_selected = 0;
+                self.selected_index  = 0;
+                self.scroll_offset   = 0;
+                self.focus           = Focus::Search;
+                self.pending_action  = PendingAction::LoadItems;
+            }
+            Err(e) => self.cmd_err(&cmd, &e, "Restore failed"),
+        }
+    }
+
+    /// Whether the current view is showing the trash.
+    pub fn is_trash_view(&self) -> bool { self.active_filter == ItemFilter::Trash }
 
     pub fn detail_field_count(&self) -> usize {
         let Some(item) = self.selected_item() else { return 0 };

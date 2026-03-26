@@ -162,6 +162,25 @@ impl BwClient {
         }
     }
 
+    /// Fetches only trashed items (`bw list items --trash`).
+    pub fn list_trash(&self) -> Result<Vec<Item>, String> {
+        let session = self.session()?;
+        let out     = bw_run(&["list", "items", "--trash", "--session", session])?;
+        if out.status.success() {
+            serde_json::from_str::<Vec<Item>>(&stdout_str(&out))
+                .map_err(|e| format!("Error parsing trash JSON: {e}"))
+        } else {
+            Err(stderr_str(&out))
+        }
+    }
+
+    /// Restores a trashed item back to the vault.
+    pub fn restore_item(&self, item_id: &str) -> Result<(), String> {
+        let session = self.session()?;
+        let out     = bw_run(&["restore", "item", item_id, "--session", session])?;
+        if out.status.success() { Ok(()) } else { Err(stderr_str(&out)) }
+    }
+
     pub fn sync(&self) -> Result<(), String> {
         let session = self.session()?;
         let out     = bw_run(&["sync", "--session", session])?;
