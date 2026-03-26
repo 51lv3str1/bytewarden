@@ -1,7 +1,7 @@
 # bytewarden
 
 A terminal UI for [Bitwarden](https://bitwarden.com), built with [Ratatui](https://ratatui.rs).  
-Wraps the official `bw` CLI to provide a keyboard-driven, mouse-supported vault browser.
+Wraps the official `bw` CLI — keyboard-driven, mouse-supported vault browser with full CRUD.
 
 ```
     __          __                              __
@@ -20,21 +20,15 @@ Wraps the official `bw` CLI to provide a keyboard-driven, mouse-supported vault 
 - [Rust toolchain](https://rustup.rs) (`cargo`) to build from source
 - Clipboard tool: `wl-copy` (Wayland), `xclip` / `xsel` (X11), or `pbcopy` (macOS)
 
-> **Note:** The login screen wordmark uses the bundled `slant` FIGlet font via `figlet-rs` — no system `figlet` install needed.
+> The login wordmark uses the bundled `slant` FIGlet font via `figlet-rs` — no system `figlet` install needed.
 
 ### Install system dependencies
 
 **Ubuntu / Debian**
 ```bash
-# Bitwarden CLI (via npm)
-npm install -g @bitwarden/cli
-
-# Or via snap
-snap install bw
-
-# Clipboard (pick one)
-sudo apt install wl-clipboard      # Wayland
-sudo apt install xclip             # X11
+npm install -g @bitwarden/cli   # or: snap install bw
+sudo apt install wl-clipboard   # Wayland
+sudo apt install xclip          # X11
 ```
 
 **Arch Linux**
@@ -46,7 +40,7 @@ sudo pacman -S bitwarden-cli xclip          # X11
 **macOS**
 ```bash
 brew install bitwarden-cli
-# pbcopy is built-in — no clipboard install needed
+# pbcopy is built-in
 ```
 
 **Rust (all platforms)**
@@ -54,7 +48,7 @@ brew install bitwarden-cli
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 ```
 
-### Rust crate dependencies (auto-installed by cargo)
+### Rust crate dependencies
 
 | Crate | Version | Purpose |
 |-------|---------|---------|
@@ -62,7 +56,7 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 | `crossterm` | 0.29 | Cross-platform terminal control, keyboard & mouse |
 | `serde` + `serde_json` | 1 | Parse `bw` CLI JSON output |
 | `color-eyre` | 0.6 | Error reporting |
-| `figlet-rs` | 0.1 | Render login wordmark with bundled `slant` font — no system dep |
+| `figlet-rs` | 0.1 | Login wordmark with bundled `slant` font |
 
 ---
 
@@ -79,57 +73,47 @@ cargo build --release
 
 ## Session resume
 
-On every startup bytewarden runs `bw status` before showing the login
-screen. Depending on the result it fast-paths the UI:
+On every startup bytewarden runs `bw status` before showing the login screen and fast-paths the UI:
 
 | `bw status` | What bytewarden does |
 |-------------|----------------------|
-| `unauthenticated` | Normal login screen — enter email and master password. |
-| `locked` | Vault is known but locked. Email is pre-filled, cursor jumps straight to the password field. |
-| `unlocked` | Active session found in `BW_SESSION`. Login screen is skipped entirely — vault loads immediately. |
+| `unauthenticated` | Normal login — enter email and master password. |
+| `locked` | Email pre-filled, cursor jumps to password field. |
+| `unlocked` | Active session found in `BW_SESSION` — vault loads immediately, login screen skipped. |
 
-While `bw status` runs, a `- Checking session…` spinner is shown at the
-bottom of the login form. It disappears once the check completes.
-
-The `unlocked` fast-path requires `BW_SESSION` to be set in the current
-shell environment. The typical workflow is:
+A `⠋ Checking session…` spinner is visible while the check runs. The `unlocked` fast-path requires `BW_SESSION` to be exported in the shell:
 
 ```bash
 export BW_SESSION=$(bw unlock --raw)
 bytewarden
 ```
 
-If `BW_SESSION` is not set (or the session has expired) despite `bw status`
-reporting `unlocked`, bytewarden falls back to the `locked` path so you can
-unlock normally.
+If `BW_SESSION` is missing or expired, bytewarden falls back to the `locked` path.
 
 ---
 
 ## Login screen
 
-| Action | Key / Input |
-|--------|-------------|
-| Switch field | `Tab` |
-| Move cursor | `←` `→` `Home` `End` |
-| Delete | `Backspace` / `Delete` |
-| Toggle Save email | `Space` (on checkbox) or click |
-| Toggle Auto-lock | `Space` (on checkbox) or click |
-| Login / Unlock | `Enter` |
-| Quit | `Ctrl+C` |
+| Key | Action |
+|-----|--------|
+| `Tab` / `Shift+Tab` | Cycle fields (Email → Password → Save email → Auto-lock → Email) |
+| `←` `→` `Home` `End` | Move cursor in text fields |
+| `Backspace` / `Delete` | Delete character |
+| `Space` | Toggle checkbox (Save email / Auto-lock) |
+| `Enter` | Login / Unlock |
+| `Ctrl+C` | Quit |
 
-The password field is always masked. Email is pre-filled if **Save email** is enabled.
+The password is always masked. Email is pre-filled when **Save email** is enabled.
 
-The field cycle order is: **Email → Password → Save email → Auto-lock → Email**.
+The feedback strip at the bottom shows login state:
 
-A feedback strip at the bottom of the form shows the current state:
-
-| State | Appearance |
-|-------|-----------|
-| Checking session | `- Checking session…` (spinner, accent color) |
-| Logging in | `- Logging in…` (spinner, accent color) |
-| Loading vault | `- Loading vault…` (spinner, accent color) |
+| State | Display |
+|-------|---------|
+| Checking session | `⠋ Checking session…` (spinner) |
+| Logging in | `⠋ Logging in…` (spinner) |
+| Loading vault | `⠋ Loading vault…` (spinner) |
 | Success | `✓ Loaded ✓` (green) |
-| Invalid credentials | `✕ Invalid credentials. Please try again.` (red) |
+| Wrong credentials | `✕ Invalid credentials. Please try again.` (red) |
 
 ---
 
@@ -137,71 +121,129 @@ A feedback strip at the bottom of the form shows the current state:
 
 ### Layout
 
-The vault screen is divided into five panels:
-
 | Panel | Label | Description |
 |-------|-------|-------------|
-| `[5]` | Status | Action feedback (spinner, ✓, ✕). Read-only — not focusable. |
-| `[1]` | Vaults | Vault selector (currently shows My Vault). |
-| `[2]` | Items | Item type filter list. |
+| `[5]` | Status | Action feedback — spinner, ✓, ✕. Read-only. |
+| `[1]` | Vaults | Vault selector (currently My Vault). |
+| `[2]` | Items | Item type filter. |
 | `[/]` | Search | Live fuzzy search bar. |
 | `[3]` | Vault | Main item list. |
-| `[4]` | Command Log | Log of every `bw` CLI call and its result. |
+| `[4]` | Command Log | Log of every `bw` CLI call. |
 
-### Navigation
+### Panel navigation
 
 | Key | Action |
 |-----|--------|
-| `F1` | Focus **[1]-Vaults** panel |
-| `F2` | Focus **[2]-Items** filter panel |
-| `F3` | Focus **[3]-Vault** list |
+| `F1` | Focus **[1]-Vaults** |
+| `F2` | Focus **[2]-Items** |
+| `F3` | Focus **[3]-Vault** |
 | `F4` | Focus **[4]-Command Log** |
-| `/` | Focus **[/]-Search** bar |
-| `Tab` | Cycle focus: Search → Vaults → Items → List → CmdLog → Search |
-| `j` / `k` or `↑` `↓` | Navigate up/down in the focused panel |
-| `PgUp` / `PgDn` | Scroll by 10 items in the list, or 5 entries in the log |
+| `/` | Focus **[/]-Search** |
+| `Tab` | Cycle: Search → Vaults → Items → List → CmdLog → Search |
 
-> **Note:** The `[5]-Status` pane is read-only and cannot be focused with `F5` or `Tab`. It updates automatically to reflect running actions, success, or errors.
-
-### Actions (from vault list `[3]`)
+### Vault list actions
 
 | Key | Action |
 |-----|--------|
+| `j` / `k` or `↑` `↓` | Navigate up / down |
+| `PgUp` / `PgDn` | Scroll 10 items |
 | `Enter` / `l` | Open item detail |
+| `n` | **New item** — create a new vault item |
 | `u` | Copy username to clipboard |
 | `c` | Copy password to clipboard |
 | `f` | Toggle favorite ★ |
 | `s` | Sync vault with server |
-| `L` | **Lock vault** — runs `bw lock`, logs to Command Log, returns to login |
-| `q` | Lock vault and return to login (no Command Log entry) |
-| `?` | Show help popup |
+| `D` | **Delete item** — opens confirmation popup |
+| `L` | Lock vault (logged to Command Log) |
+| `q` | Lock vault |
+| `?` | Help popup |
 
 ### Search
 
-Type `/` from anywhere on the vault screen to focus the search bar. The fuzzy search runs across item name, username, and URL. Results update live as you type. `Esc` clears the query and returns focus to the list. While the search bar is focused, `j`/`k` and `Enter` navigate and open items without leaving the search bar.
+Press `/` to focus the search bar. Fuzzy search runs across name, username, and URL — results update live. `Esc` clears the query and returns to the list. While focused, `j`/`k` and `Enter` navigate and open items.
 
-### Items filter panel `[2]`
+### Items filter `[2]`
 
-Navigate with `j`/`k` then press `Enter` to apply, or click a filter to apply it immediately:
-
-- All Items
-- ★ Favorites
-- Login / Card / Identity / Secure Note / SSH Key
+Navigate with `j`/`k`, press `Enter` to apply, or click to apply immediately:
+All Items · ★ Favorites · Login · Card · Identity · Secure Note · SSH Key
 
 ---
 
 ## Detail screen
 
+### Read mode
+
 | Key | Action |
 |-----|--------|
-| `j` / `k` or `↑` `↓` or `PgDn` / `PgUp` | Move to next / previous field (one field at a time) |
-| `Ctrl+H` | Toggle show / hide for the selected hidden field |
-| `c` | Copy the selected field to clipboard |
-| `Esc` / `h` | Go back to vault |
+| `j` / `k` or `↑` `↓` | Move between fields |
+| `Tab` / `Shift+Tab` | Move between fields (wraps) |
+| `PgUp` / `PgDn` | Same as `k` / `j` |
+| `F2` | Toggle reveal on selected hidden field |
+| `c` | Copy selected field to clipboard |
+| `e` | **Enter edit mode** |
+| `D` | **Delete item** — opens confirmation popup |
+| `Esc` / `h` | Back to vault |
 
-**Hidden fields** (Password, Card Number, CVV, TOTP, SSN, Passport, License, and custom hidden fields) display `●●●●●●●●` until you press `Ctrl+H` while that field is selected. Navigating away from a field automatically hides it again.
+Hidden fields (Password, Card Number, CVV, TOTP, SSN, Passport, License, custom hidden fields) show `●●●●●●●●` until `F2` is pressed. Navigating away re-hides the field.
 
-All field types are displayed: Name, Type, Username, Password, URL(s), TOTP, Notes, Card fields, Identity fields, and any custom fields.
+### Edit mode
+
+Press `e` from read mode to edit any item inline.
+
+| Key | Action |
+|-----|--------|
+| `Tab` / `Shift+Tab` | Next / previous field (wraps) |
+| `↓` / `↑` | Next / previous field (clamps) |
+| `←` `→` `Home` `End` | Move cursor within field |
+| `Backspace` / `Delete` | Delete character |
+| `F2` | Reveal / hide hidden field while editing |
+| `Enter` | **Save** — calls `bw edit item` |
+| `Esc` | Cancel — back to read mode (no changes saved) |
+
+The **Type** field is read-only. All other fields are editable. Changes are saved atomically via `bw edit item` — the local item list is updated immediately on success.
+
+---
+
+## Create screen
+
+Press `n` from the vault list to create a new item.
+
+**Step 1 — choose type:**
+
+| Key | Action |
+|-----|--------|
+| `j` / `k` or `↑` `↓` | Navigate types |
+| `Tab` / `Shift+Tab` | Navigate types (wraps) |
+| `Enter` | Select type and go to fields |
+| `Esc` | Cancel |
+
+Supported types: **Login**, **Secure Note**, **Card**, **Identity**.
+
+**Step 2 — fill fields:**
+
+| Key | Action |
+|-----|--------|
+| `Tab` / `Shift+Tab` | Next / previous field (wraps) |
+| `↓` / `↑` | Next / previous field (clamps) |
+| `←` `→` `Home` `End` | Move cursor |
+| `Backspace` / `Delete` | Delete character |
+| `F2` | Reveal / hide hidden field |
+| `Enter` | **Create** — calls `bw create item` |
+| `Esc` | Cancel |
+
+The Name field is required. On success the item is inserted into the local list and the vault screen is shown with the new item selected.
+
+---
+
+## Delete confirmation
+
+Press `D` from the vault list or detail screen to delete an item.
+
+| Key | Action |
+|-----|--------|
+| `Enter` | Move to trash (`bw delete item`) |
+| `D` | **Permanent delete** (`bw delete item --permanent`) |
+| `Esc` / `n` | Cancel |
 
 ---
 
@@ -209,14 +251,14 @@ All field types are displayed: Name, Type, Username, Password, URL(s), TOTP, Not
 
 | Action | Effect |
 |--------|--------|
-| Click panel | Focuses that panel |
-| Click list item | Selects it |
-| Click same item again | Opens detail |
-| Click filter | Applies filter immediately |
-| Scroll wheel | Scrolls the hovered panel |
-| Click detail field | Selects field |
-| Click same field again | Toggles reveal |
-| Click header row (detail) | Go back to vault |
+| Click panel | Focus that panel |
+| Click list item | Select it |
+| Click same item again | Open detail |
+| Click filter | Apply filter immediately |
+| Scroll wheel | Scroll the hovered panel |
+| Click detail field | Select field |
+| Click same field again | Toggle reveal |
+| Click header row (detail) | Back to vault |
 
 ---
 
@@ -233,7 +275,7 @@ email = "you@example.com"
 auto_lock = false
 lock_after_minutes = 15
 
-# Theme
+# Theme (all keys optional — omit to keep built-in default)
 [theme]
 accent        = "#cba6f7"   # active borders, cursor, highlights
 inactive      = "#6c7086"   # inactive panel borders
@@ -249,51 +291,55 @@ item_ssh      = "#b4befe"
 item_favorite = "#f9e2af"
 ```
 
-All `[theme]` keys are optional — omit any key to keep its built-in default, so you can override only what you want.
-
 ### Auto-lock
 
-Enable **Auto-lock** on the login screen (checkbox) or set `auto_lock = true` in `config.toml`.  
-The vault locks automatically after `lock_after_minutes` minutes of inactivity (any keypress resets the timer).  
-To change the timeout, edit `lock_after_minutes` in `config.toml` and restart.
+Enable on the login screen or set `auto_lock = true` in config. The vault locks after `lock_after_minutes` minutes of inactivity — any keypress resets the timer.
 
 ---
 
-## Command log `[4]`
+## Command Log `[4]`
 
-Every `bw` CLI call is logged with its result. Session keys are always redacted as `***`. Passwords, TOTP codes, and clipboard values are logged as `[hidden]`. The log keeps the last 50 entries.
+Every `bw` CLI call is logged with its result. Session keys are always redacted as `***`. Passwords, TOTP codes, and clipboard values are logged as `[hidden]`. Keeps the last 50 entries.
 
-Scroll with `j`/`k` (1 entry) or `PgUp`/`PgDn` (5 entries) when the `[4]-Command Log` panel is focused.
+Focus with `F4`, scroll with `j`/`k` (1 line) or `PgUp`/`PgDn` (5 lines).
 
 ---
 
 ## Clipboard
 
-The clipboard tool is detected automatically at runtime:
+Detected automatically at runtime:
 
-| Environment | Tool used |
-|-------------|-----------|
+| Environment | Tool |
+|-------------|------|
 | Wayland (`$WAYLAND_DISPLAY`) | `wl-copy` |
 | X11 (`$DISPLAY`) | `xclip -selection clipboard` or `xsel` |
 | macOS | `pbcopy` |
 
 ---
 
-## Keyboard reference card
+## Keyboard reference
 
 ```
-LOGIN                  VAULT                         DETAIL
-──────────────────     ──────────────────────────    ──────────────────
-Tab    next field      F1-F4  focus panel            j/k    prev/next field
-Enter  login/unlock    /      search                 PgUp/Dn  same as j/k
-Space  toggle check    j/k    navigate               ^H     toggle reveal
-←→     move cursor     PgUp/Dn scroll (10/5)         c      copy field
-Ctrl+C quit            Enter  open detail            Esc/h  back to vault
-                       u      copy username
-                       c      copy password
-                       f      toggle favorite
-                       s      sync vault
-                       L      lock (logged)
-                       q      lock (silent)
-                       ?      help popup
+LOGIN                      VAULT LIST                    DETAIL (read)
+─────────────────────      ────────────────────────────  ───────────────────────
+Tab/S+Tab  next field      F1-F4   focus panel           j/k / Tab   prev/next field
+Enter      login/unlock    /       search                F2          reveal/hide
+Space      toggle check    j/k     navigate              c           copy field
+←→         cursor          Enter   open detail           e           edit item
+Ctrl+C     quit            n       new item              D           delete item
+                           u       copy username         Esc/h       back to vault
+                           c       copy password
+                           f       toggle favorite       DETAIL (edit)
+                           s       sync vault            ─────────────────────────
+                           D       delete item           Tab/S+Tab   next/prev field
+                           L/q     lock vault            ←→          cursor in field
+                           ?       help                  F2          reveal/hide
+                                                         Enter       save
+CREATE (type select)        CREATE (fill fields)         Esc         cancel edit
+────────────────────        ───────────────────
+j/k / Tab  select type      Tab/S+Tab  next/prev field   CONFIRM DELETE
+Enter      confirm          ←→         cursor            ──────────────────────
+Esc        cancel           F2         reveal/hide       Enter   move to trash
+                            Enter      create            D       permanent delete
+                            Esc        cancel            Esc/n   cancel
 ```
