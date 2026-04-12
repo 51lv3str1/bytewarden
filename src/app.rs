@@ -23,7 +23,7 @@ impl ItemFilter {
     pub fn label(&self) -> &'static str {
         match self {
             ItemFilter::All        => "All Items",
-            ItemFilter::Favorites  => "★ Favorites",
+            ItemFilter::Favorites  => "Favorites",
             ItemFilter::Login      => "Login",
             ItemFilter::Card       => "Card",
             ItemFilter::Identity   => "Identity",
