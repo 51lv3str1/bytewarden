@@ -3,7 +3,7 @@
 /// Shared navigation helpers at the bottom eliminate repeated
 /// Tab-wrap / clamp / text-input logic across all screens.
 
-use crate::app::{App, Focus, LoginField, Screen, ITEM_FILTERS, CREATE_ITEM_TYPES, ItemFilter};
+use crate::app::{App, EditField, Focus, LoginField, Screen, ITEM_FILTERS, CREATE_ITEM_TYPES, ItemFilter};
 use crate::app::config;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers,
                         MouseEvent, MouseEventKind, MouseButton};
@@ -143,14 +143,7 @@ fn handle_vault(app: &mut App, key: KeyEvent) {
                 }
             }
             KeyCode::Backspace => { app.search_query.pop(); app.perform_search(); }
-            // Alt+key shortcuts — same as List panel
-            KeyCode::Char('q') if is_alt(&key) => app.lock_vault(),
-            KeyCode::Char('d') if is_alt(&key) => app.open_confirm_delete(),
-            KeyCode::Char('r') if is_alt(&key) && app.is_trash_view()  => app.queue_restore_item(),
-            KeyCode::Char('u') if is_alt(&key) && !app.is_trash_view() => app.copy_username_to_clipboard(),
-            KeyCode::Char('c') if is_alt(&key) && !app.is_trash_view() => app.copy_password_to_clipboard(),
-            KeyCode::Char('f') if is_alt(&key) && !app.is_trash_view() => app.toggle_favorite(),
-            KeyCode::Char('n') if is_alt(&key) && !app.is_trash_view() => app.open_create(),
+            _ if is_alt(&key)  => handle_alt_shortcuts(app, key),
             // Plain char — only feed into search query when no modifiers active
             KeyCode::Char(c) if key.modifiers == KeyModifiers::NONE => {
                 app.search_query.push(c); app.perform_search();
@@ -166,14 +159,7 @@ fn handle_vault(app: &mut App, key: KeyEvent) {
             KeyCode::Enter | KeyCode::Char('l') => app.go_to_detail(),
             KeyCode::Tab                         => app.cycle_focus(),
             KeyCode::Char('?')                   => app.screen = Screen::Help,
-            // Alt+ action shortcuts — safe from any panel, no text input conflict
-            KeyCode::Char('q') if is_alt(&key) => app.lock_vault(),
-            KeyCode::Char('d') if is_alt(&key) => app.open_confirm_delete(),
-            KeyCode::Char('r') if is_alt(&key) && app.is_trash_view()  => app.queue_restore_item(),
-            KeyCode::Char('u') if is_alt(&key) && !app.is_trash_view() => app.copy_username_to_clipboard(),
-            KeyCode::Char('c') if is_alt(&key) && !app.is_trash_view() => app.copy_password_to_clipboard(),
-            KeyCode::Char('f') if is_alt(&key) && !app.is_trash_view() => app.toggle_favorite(),
-            KeyCode::Char('n') if is_alt(&key) && !app.is_trash_view() => app.open_create(),
+            _ if is_alt(&key)                    => handle_alt_shortcuts(app, key),
             _ => {}
         },
 
@@ -203,7 +189,7 @@ fn handle_detail(app: &mut App, key: KeyEvent) {
             KeyCode::Down    => nav_clamp(&mut app.edit_field_idx, n, 1),
             KeyCode::Up      => nav_clamp(&mut app.edit_field_idx, n, -1),
             KeyCode::F(2)    => app.edit_toggle_reveal(),
-            _                => text_input_edit(app, key),
+            _                => text_input(app.edit_field_mut(), key),
         }
         return;
     }
@@ -268,7 +254,7 @@ fn handle_create(app: &mut App, key: KeyEvent) {
                     if f.hidden { f.revealed = !f.revealed; }
                 }
             }
-            _                => text_input_create(app, key),
+            _                => text_input(app.create_field_mut(), key),
         }
     }
 }
@@ -426,32 +412,33 @@ fn nav_clamp(idx: &mut usize, len: usize, dir: i8) {
     else       { if *idx > 0 { *idx -= 1; } }
 }
 
-// ── Text input helpers ────────────────────────────────────────────────────
+// ── Shared helpers ────────────────────────────────────────────────────────
 
-/// Cursor + typing keys for the edit form fields.
-fn text_input_edit(app: &mut App, key: KeyEvent) {
+/// Alt+key vault actions shared by Search and List panels.
+fn handle_alt_shortcuts(app: &mut App, key: KeyEvent) {
     match key.code {
-        KeyCode::Left      => app.edit_cursor_left(),
-        KeyCode::Right     => app.edit_cursor_right(),
-        KeyCode::Home      => app.edit_cursor_home(),
-        KeyCode::End       => app.edit_cursor_end(),
-        KeyCode::Backspace => app.edit_delete_before(),
-        KeyCode::Delete    => app.edit_delete_at(),
-        KeyCode::Char(c)   => app.edit_insert_char(c),
+        KeyCode::Char('q')                               => app.lock_vault(),
+        KeyCode::Char('d')                               => app.open_confirm_delete(),
+        KeyCode::Char('r') if  app.is_trash_view()       => app.queue_restore_item(),
+        KeyCode::Char('u') if !app.is_trash_view()       => app.copy_username_to_clipboard(),
+        KeyCode::Char('c') if !app.is_trash_view()       => app.copy_password_to_clipboard(),
+        KeyCode::Char('f') if !app.is_trash_view()       => app.toggle_favorite(),
+        KeyCode::Char('n') if !app.is_trash_view()       => app.open_create(),
         _ => {}
     }
 }
 
-/// Cursor + typing keys for the create form fields.
-fn text_input_create(app: &mut App, key: KeyEvent) {
+/// Cursor + typing keys for a form field (edit and create share this).
+fn text_input(field: Option<&mut EditField>, key: KeyEvent) {
+    let Some(f) = field else { return };
     match key.code {
-        KeyCode::Left      => app.create_cursor_left(),
-        KeyCode::Right     => app.create_cursor_right(),
-        KeyCode::Home      => app.create_cursor_home(),
-        KeyCode::End       => app.create_cursor_end(),
-        KeyCode::Backspace => app.create_delete_before(),
-        KeyCode::Delete    => app.create_delete_at(),
-        KeyCode::Char(c)   => app.create_insert_char(c),
+        KeyCode::Left      => f.cursor_left(),
+        KeyCode::Right     => f.cursor_right(),
+        KeyCode::Home      => f.cursor_home(),
+        KeyCode::End       => f.cursor_end(),
+        KeyCode::Backspace => f.delete_before(),
+        KeyCode::Delete    => f.delete_at(),
+        KeyCode::Char(c)   => f.insert(c),
         _ => {}
     }
 }

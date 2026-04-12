@@ -713,16 +713,9 @@ impl App {
     }
 
     /// Delegate a key to the currently focused create field.
-    fn create_field_mut(&mut self) -> Option<&mut EditField> {
+    pub fn create_field_mut(&mut self) -> Option<&mut EditField> {
         self.create_fields.get_mut(self.create_field_idx)
     }
-    pub fn create_insert_char(&mut self, c: char)   { if let Some(f) = self.create_field_mut() { f.insert(c); } }
-    pub fn create_delete_before(&mut self)           { if let Some(f) = self.create_field_mut() { f.delete_before(); } }
-    pub fn create_delete_at(&mut self)               { if let Some(f) = self.create_field_mut() { f.delete_at(); } }
-    pub fn create_cursor_left(&mut self)             { if let Some(f) = self.create_field_mut() { f.cursor_left(); } }
-    pub fn create_cursor_right(&mut self)            { if let Some(f) = self.create_field_mut() { f.cursor_right(); } }
-    pub fn create_cursor_home(&mut self)             { if let Some(f) = self.create_field_mut() { f.cursor_home(); } }
-    pub fn create_cursor_end(&mut self)              { if let Some(f) = self.create_field_mut() { f.cursor_end(); } }
 
     pub fn queue_create_item(&mut self) {
         let name = self.create_fields.first().map(|f| f.value.trim().to_string()).unwrap_or_default();
@@ -765,16 +758,9 @@ impl App {
     }
 
     /// Delegate a key to the currently focused edit field.
-    fn edit_field_mut(&mut self) -> Option<&mut EditField> {
+    pub fn edit_field_mut(&mut self) -> Option<&mut EditField> {
         self.edit_fields.get_mut(self.edit_field_idx)
     }
-    pub fn edit_insert_char(&mut self, c: char)   { if let Some(f) = self.edit_field_mut() { f.insert(c); } }
-    pub fn edit_delete_before(&mut self)           { if let Some(f) = self.edit_field_mut() { f.delete_before(); } }
-    pub fn edit_delete_at(&mut self)               { if let Some(f) = self.edit_field_mut() { f.delete_at(); } }
-    pub fn edit_cursor_left(&mut self)             { if let Some(f) = self.edit_field_mut() { f.cursor_left(); } }
-    pub fn edit_cursor_right(&mut self)            { if let Some(f) = self.edit_field_mut() { f.cursor_right(); } }
-    pub fn edit_cursor_home(&mut self)             { if let Some(f) = self.edit_field_mut() { f.cursor_home(); } }
-    pub fn edit_cursor_end(&mut self)              { if let Some(f) = self.edit_field_mut() { f.cursor_end(); } }
     pub fn edit_toggle_reveal(&mut self) {
         if let Some(f) = self.edit_field_mut() { if f.hidden { f.revealed = !f.revealed; } }
     }

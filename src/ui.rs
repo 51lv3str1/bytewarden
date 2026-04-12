@@ -937,6 +937,45 @@ fn input_with_cursor<'a>(text: &'a str, cursor_pos: usize, focused: bool, accent
     ])
 }
 
+// ── Starfield helpers ─────────────────────────────────────────────────────
+
+const STAR_DIM:    Color = Color::Rgb(38,  34,  72);
+const STAR_MID:    Color = Color::Rgb(90,  84,  148);
+const STAR_BRIGHT: Color = Color::Rgb(185, 178, 248);
+
+/// Deterministic star character and color for a given (row, col) cell.
+fn star_char_at(row: usize, col: usize) -> (char, Color) {
+    let h = row.wrapping_mul(17).wrapping_add(col.wrapping_mul(31)).wrapping_add(row.wrapping_mul(col)) % 120;
+    match h {
+        0     => ('\u{2726}', STAR_BRIGHT),
+        1 | 2 => ('\u{00b7}', STAR_MID),
+        3     => ('\u{22c6}', STAR_DIM),
+        _     => (' ',        STAR_DIM),
+    }
+}
+
+/// Build a full-width line of pure starfield for the given row.
+fn build_star_line(w: usize, row: usize) -> Line<'static> {
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    let mut cur_color = STAR_DIM;
+    let mut cur_text  = String::new();
+    for col in 0..w {
+        let (ch, color) = star_char_at(row, col);
+        if color == cur_color {
+            cur_text.push(ch);
+        } else {
+            if !cur_text.is_empty() {
+                spans.push(Span::styled(cur_text.clone(), Style::default().fg(cur_color)));
+                cur_text.clear();
+            }
+            cur_color = color;
+            cur_text.push(ch);
+        }
+    }
+    if !cur_text.is_empty() { spans.push(Span::styled(cur_text, Style::default().fg(cur_color))); }
+    Line::from(spans)
+}
+
 // ── Logo renderer ─────────────────────────────────────────────────────────
 
 fn render_logo(frame: &mut Frame, app: &App, area: Rect) {
@@ -944,9 +983,7 @@ fn render_logo(frame: &mut Frame, app: &App, area: Rect) {
     let w = area.width as usize;
     let h = area.height as usize;
 
-    let s_dim    = Style::default().fg(Color::Rgb(38, 34, 72));
-    let s_mid    = Style::default().fg(Color::Rgb(90, 84, 148));
-    let s_bright = Style::default().fg(Color::Rgb(185, 178, 248));
+    let s_dim    = Style::default().fg(STAR_DIM);
     let acc_dim  = Style::default().fg(t.inactive);
     let col_acc  = Style::default().fg(t.accent);
 
@@ -977,11 +1014,6 @@ fn render_logo(frame: &mut Frame, app: &App, area: Rect) {
     let f1c = if w > f1w { (w - f1w) / 2 } else { 0 };
     let f2c = if w > f2w { (w - f2w) / 2 } else { 0 };
 
-    let star_at = |row: usize, col: usize| -> (char, Style) {
-        let h = row.wrapping_mul(17).wrapping_add(col.wrapping_mul(31)).wrapping_add(row.wrapping_mul(col)) % 120;
-        match h { 0 => ('\u{2726}', s_bright), 1|2 => ('\u{00b7}', s_mid), 3 => ('\u{22c6}', s_dim), _ => (' ', s_dim) }
-    };
-
     let spans_from = |row: usize, fig: &str, fc: usize, fw: usize| -> Line<'static> {
         let mut spans: Vec<Span<'static>> = Vec::new();
         let mut cs = s_dim; let mut ct = String::new();
@@ -989,22 +1021,14 @@ fn render_logo(frame: &mut Frame, app: &App, area: Rect) {
             let fi = col.wrapping_sub(fc);
             let (ch, st) = if col >= fc && fi < fw {
                 let c = fig.chars().nth(fi).unwrap_or(' ');
-                if c != ' ' { (c, col_acc) } else { star_at(row, col) }
-            } else { star_at(row, col) };
-            if st == cs { ct.push(ch); } else {
-                if !ct.is_empty() { spans.push(Span::styled(ct.clone(), cs)); ct.clear(); }
-                cs = st; ct.push(ch);
-            }
-        }
-        if !ct.is_empty() { spans.push(Span::styled(ct, cs)); }
-        Line::from(spans)
-    };
-
-    let pure_stars = |row: usize| -> Line<'static> {
-        let mut spans: Vec<Span<'static>> = Vec::new();
-        let mut cs = s_dim; let mut ct = String::new();
-        for col in 0..w {
-            let (ch, st) = star_at(row, col);
+                if c != ' ' { (c, col_acc) } else {
+                    let (ch, color) = star_char_at(row, col);
+                    (ch, Style::default().fg(color))
+                }
+            } else {
+                let (ch, color) = star_char_at(row, col);
+                (ch, Style::default().fg(color))
+            };
             if st == cs { ct.push(ch); } else {
                 if !ct.is_empty() { spans.push(Span::styled(ct.clone(), cs)); ct.clear(); }
                 cs = st; ct.push(ch);
@@ -1024,7 +1048,7 @@ fn render_logo(frame: &mut Frame, app: &App, area: Rect) {
         let s = row.wrapping_sub(r2s);
         if row >= r1s && r < r1.len()      { lines.push(spans_from(row, r1[r], f1c, f1w)); }
         else if row >= r2s && s < r2.len() { lines.push(spans_from(row, r2[s], f2c, f2w)); }
-        else                               { lines.push(pure_stars(row)); }
+        else                               { lines.push(build_star_line(w, row)); }
     }
     frame.render_widget(Paragraph::new(lines), area);
 }
@@ -1053,33 +1077,9 @@ fn fill_stars(frame: &mut Frame, area: Rect) {
     if area.height == 0 || area.width == 0 { return; }
     let w = area.width as usize;
     let h = area.height as usize;
-    let s_dim    = Style::default().fg(Color::Rgb(38, 34, 72));
-    let s_mid    = Style::default().fg(Color::Rgb(90, 84, 148));
-    let s_bright = Style::default().fg(Color::Rgb(185, 178, 248));
-    let star_at = |row: usize, col: usize| -> (char, Style) {
-        let hash = row.wrapping_mul(17).wrapping_add(col.wrapping_mul(31))
-            .wrapping_add(row.wrapping_mul(col)) % 120;
-        match hash {
-            0     => ('\u{2726}', s_bright),
-            1 | 2 => ('\u{00b7}', s_mid),
-            3     => ('\u{22c6}', s_dim),
-            _     => (' ',        s_dim),
-        }
-    };
     // offset rows by area.y so stars align with the full-screen pattern
-    let lines: Vec<ratatui::text::Line> = (0..h).map(|r| {
-        let row = area.y as usize + r;
-        let mut spans: Vec<Span<'static>> = Vec::new();
-        let mut cs = s_dim; let mut ct = String::new();
-        for col in 0..w {
-            let (ch, st) = star_at(row, col);
-            if st == cs { ct.push(ch); } else {
-                if !ct.is_empty() { spans.push(Span::styled(ct.clone(), cs)); ct.clear(); }
-                cs = st; ct.push(ch);
-            }
-        }
-        if !ct.is_empty() { spans.push(Span::styled(ct, cs)); }
-        ratatui::text::Line::from(spans)
-    }).collect();
+    let lines: Vec<Line> = (0..h)
+        .map(|r| build_star_line(w, area.y as usize + r))
+        .collect();
     frame.render_widget(Paragraph::new(lines), area);
 }
