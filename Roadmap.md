@@ -1,193 +1,200 @@
 # Bytewarden — Roadmap
 
-Missing functionality from the Bitwarden CLI, ordered by priority.  
-Each section maps directly to `bw` commands that exist but are not yet wrapped.
-
+Full feature parity with the Bitwarden CLI, organized by product area.  
 ~~Strikethrough~~ = fully implemented.
 
 ---
 
-## ~~P0 — Core vault CRUD~~ ✅
+## 1. Authentication
 
-### ~~Item create~~
-- ~~New screen for each item type: Login, Secure Note, Card, Identity~~
-- ~~Type selector → field form → `bw create item`~~
-- ~~Tab wraps through fields, F2 reveals hidden fields~~
-
-### ~~Item edit~~
-- ~~All fields editable inline in detail screen~~
-- ~~`e` to enter edit mode, `Enter` to save, `Esc` to cancel~~
-- ~~Maps to: `bw get item <id>` → patch JSON → `bw edit item <id>`~~
-
-### ~~Item delete~~
-- ~~`D` key from vault list or detail screen opens confirmation popup~~
-- ~~`Enter` = trash (`bw delete item`), `D` = permanent (`bw delete item --permanent`)~~
-
-### Two-step login during authentication _(remaining)_
-- `bw login --raw` does not pass `--method` or `--code`
-- Users with 2FA (Authenticator, Email, YubiKey) hit an interactive prompt bytewarden cannot handle
-- Fix: add a 2FA code field to the login screen, shown only when `bw login` returns an auth challenge
-- Supported methods: Authenticator (`0`), Email (`1`), YubiKey (`3`)
-
-### Master password re-prompt _(remaining)_
-- `reprompt` field exists on CLI item JSON but is not deserialized in `Item`
-- Items with `reprompt: 1` should require password confirmation before revealing or copying sensitive fields
-- Fix: add `reprompt: u8` to `Item`, check before `copy_selected_field` and `edit_toggle_reveal`
+| # | Feature | CLI |
+|---|---------|-----|
+| 1.1 | ~~Email + master password login~~ | `bw login` |
+| 1.2 | ~~Vault unlock (locked session)~~ | `bw unlock` |
+| 1.3 | ~~Lock vault~~ | `bw lock` |
+| 1.4 | ~~Logout~~ | `bw logout` |
+| 1.5 | ~~Session key management via `BW_SESSION`~~ | `--session` |
+| 1.6 | ~~Auto-lock after inactivity~~ | `bw lock` |
+| 1.7 | ~~Session detection on startup (`unlocked` / `locked` / `unauthenticated`)~~ | `bw status` |
+| 1.8 | Two-factor authentication — Authenticator (method `0`), Email (`1`), YubiKey (`3`) | `bw login --method --code` |
+| 1.9 | API key login | `bw login --apikey` |
+| 1.10 | SSO login | `bw login --sso` |
+| 1.11 | Master password re-prompt for items with `reprompt: 1` | — |
+| 1.12 | Multiple account support via `BITWARDENCLI_APPDATA_DIR` | env var |
 
 ---
 
-## P1 — Folder support
+## 2. Vault Browsing & Search
 
-`folder_id` is already deserialized in `Item` but folders are never fetched or shown.
-
-- Fetch folders on login: `bw list folders --session <key>`
-- Add `Folder` struct: `{ id, name }`
-- Show folders in the `[1]-Vaults` panel (currently hardcoded to "My Vault")
-- Filter vault list by selected folder
-- Folder CRUD:
-  - Create: `bw get template folder | bw encode | bw create folder`
-  - Rename: `bw get folder <id> | mutate | bw encode | bw edit folder <id>`
-  - Delete: `bw delete folder <id>`
-
----
-
-## P2 — Password & passphrase generator
-
-`bw generate` is available in the CLI but has no UI surface.
-
-- Generator popup accessible from vault list (`g`) and create/edit screens
-- Options to expose:
-  - `--uppercase` `-u`, `--lowercase` `-l`, `--number` `-n`, `--special` `-s`
-  - `--length <n>` (min 5)
-  - `--passphrase` mode: `--words <n>`, `--separator <char>`, `--capitalize`, `--includeNumber`
-- One key to copy generated value to clipboard and optionally fill the focused field
+| # | Feature | CLI |
+|---|---------|-----|
+| 2.1 | ~~List all vault items~~ | `bw list items` |
+| 2.2 | ~~Live fuzzy search~~ | `--search` |
+| 2.3 | ~~Filter by item type (Login, Card, Identity, Secure Note, SSH Key)~~ | — |
+| 2.4 | ~~Filter favorites~~ | — |
+| 2.5 | ~~Trash view~~ | `--trash` |
+| 2.6 | Filter by folder | `--folderid` |
+| 2.7 | Filter by collection | `--collectionid` |
+| 2.8 | Filter by organization vault | `--organizationid` |
+| 2.9 | Filter by URL | `--url` |
+| 2.10 | Show `serverUrl` and `lastSync` in status pane | `bw status` |
+| 2.11 | Display user fingerprint phrase | `bw get fingerprint me` |
 
 ---
 
-## P3 — Attachments
+## 3. Item Detail & Copy
 
-`Item` struct has no `attachments` field — completely invisible.
-
-- Add `attachments: Vec<Attachment>` to `Item`: `{ id, fileName, size, url }`
-- Show attachments section in detail screen
-- Download: `bw get attachment <filename> --itemid <id> --output <path>`
-- Upload: `bw create attachment --file <path> --itemid <id>`
-- Delete: `bw delete attachment <id> --itemid <id>`
-
----
-
-## P4 — Bitwarden Send
-
-Entirely absent — no data model, no screen, no `bw send` calls.
-
-- Add `Send` struct: `{ id, name, type, text, file, key, deletionDate, maxAccessCount, … }`
-- New Send screen / panel in vault layout
-- Full subcommand coverage:
-  - List: `bw send list`
-  - Create text: `bw send template send.text | bw encode | bw send create`
-  - Create file: `bw send template send.file | bw encode | bw send create`
-  - Edit: `bw send get <id> | mutate | bw encode | bw send edit`
-  - Delete: `bw send delete <id>`
-  - Receive: `bw send receive [--password <pw>] <url>`
-  - Copy Send link to clipboard after creation
+| # | Feature | CLI |
+|---|---------|-----|
+| 3.1 | ~~View all fields for Login, Card, Identity, Secure Note~~ | `bw get item` |
+| 3.2 | ~~Reveal hidden fields (F2)~~ | — |
+| 3.3 | ~~Copy username from memory~~ | — |
+| 3.4 | ~~Copy password from memory~~ | — |
+| 3.5 | ~~Copy TOTP live code~~ | `bw get totp` |
+| 3.6 | ~~Copy URI~~ | — |
+| 3.7 | ~~Copy card fields (number, CVV, expiry)~~ | — |
+| 3.8 | ~~Copy identity fields~~ | — |
+| 3.9 | ~~Copy notes~~ | — |
+| 3.10 | ~~Copy custom fields~~ | — |
+| 3.11 | View SSH key fields (public key, private key, fingerprint) | — |
 
 ---
 
-## P5 — Organizations & collections
+## 4. Item Create & Edit
 
-No org or collection data is fetched or shown.
-
-- Add `Organization` struct: `{ id, name }`
-- Add `Collection` struct: `{ id, name, organizationId }`
-- Add `collectionIds: Vec<String>` and `organizationId: Option<String>` to `Item`
-- Show org vaults in `[1]-Vaults` panel alongside personal vault
-- Filter by collection in `[2]-Items` panel
-- Commands to wrap:
-  - `bw list organizations`
-  - `bw list collections` / `bw list org-collections --organizationid <id>`
-  - `bw move <itemid> <organizationid> <encodedCollectionIds>`
-
----
-
-## P6 — Import & Export
-
-Neither direction is implemented.
-
-### Export
-- `bw export --format csv --output <path>`
-- `bw export --format json --output <path>`
-- `bw export --format encrypted_json --password <pw> --output <path>`
-- `bw export --format zip --output <path>` (includes attachments)
-- Org export: add `--organizationid <id>`
-
-### Import
-- `bw import <format> <path>`
-- Show format picker populated from `bw import --formats`
-- Org import: add `--organizationid <id>`
+| # | Feature | CLI |
+|---|---------|-----|
+| 4.1 | ~~Create Login item~~ | `bw create item` |
+| 4.2 | ~~Create Secure Note~~ | `bw create item` |
+| 4.3 | ~~Create Card item~~ | `bw create item` |
+| 4.4 | ~~Create Identity item~~ | `bw create item` |
+| 4.5 | ~~Edit all fields inline~~ | `bw edit item` |
+| 4.6 | ~~Delete to trash~~ | `bw delete item` |
+| 4.7 | ~~Permanent delete~~ | `bw delete item --permanent` |
+| 4.8 | ~~Restore from trash~~ | `bw restore item` |
+| 4.9 | ~~Toggle favorite~~ | `bw edit item` |
+| 4.10 | Create SSH Key item | `bw create item` (type `5`) |
+| 4.11 | Multiple URIs per Login item | — |
+| 4.12 | URI match type per URL (Domain, Host, Exact, Regex, Never) | `match` field |
+| 4.13 | Add / edit / remove custom fields (Text, Hidden, Boolean) | `fields[]` |
+| 4.14 | Assign item to folder on create/edit | `folderId` |
+| 4.15 | Move item to organization + collection | `bw move` |
+| 4.16 | Clone item | `bw create item` |
 
 ---
 
-## P7 — `bw status` on startup _(partially done)_
+## 5. Folders
 
-- ~~Call `bw status` at startup before showing login screen~~
-- ~~Parse response: `{ serverUrl, lastSync, userEmail, userId, status }`~~
-- ~~`unlocked` → skip login, load vault from `BW_SESSION`~~
-- ~~`locked` → pre-fill email, prompt for master password only~~
-- ~~`unauthenticated` → full login flow~~
-- Show `serverUrl` and `lastSync` in the `[5]-Status` pane ← **remaining**
-
----
-
-## P8 — `UriData` match field
-
-`UriData` only deserializes `uri`. The `match` field is silently dropped.
-
-- Add `match_type: Option<u8>` to `UriData`
-- Show match type label next to each URL in detail view:
-  `0` Domain · `1` Host · `2` Starts With · `3` Exact · `4` Regex · `5` Never
-- Make match type editable in create/edit login forms
+| # | Feature | CLI |
+|---|---------|-----|
+| 5.1 | List folders in sidebar | `bw list folders` |
+| 5.2 | Filter vault list by selected folder | `--folderid` |
+| 5.3 | Create folder | `bw create folder` |
+| 5.4 | Rename folder | `bw edit folder` |
+| 5.5 | Delete folder | `bw delete folder` |
 
 ---
 
-## P9 — API key login (`bw login --apikey`)
+## 6. Organizations & Collections
 
-Only email + master password login is implemented.
-
-- Add API key login option to the login screen (toggle or separate field set)
-- Prompt for `client_id` and `client_secret`
-- Support env var passthrough: `BW_CLIENTID` / `BW_CLIENTSECRET`
-- After `--apikey` login, must still call `bw unlock` with master password to decrypt vault — handle this two-step flow in the UI
-- Useful for accounts using FIDO2 or Duo 2FA (not supported interactively)
-
----
-
-## P10 — Server configuration (`bw config server`)
-
-No UI to switch servers — users must run `bw config server <url>` manually before launching.
-
-- Add `server_url` key to `config.toml`
-- On startup, if `server_url` is set, call `bw config server <url>` before login
-- Presets: US cloud (default), EU cloud (`https://vault.bitwarden.eu`), custom self-hosted URL
-- Show active server URL in `[5]-Status` pane (sourced from `bw status`)
+| # | Feature | CLI |
+|---|---------|-----|
+| 6.1 | List organizations in sidebar | `bw list organizations` |
+| 6.2 | List collections per organization | `bw list org-collections` |
+| 6.3 | Filter items by collection | `--collectionid` |
+| 6.4 | Create org-collection | `bw create org-collection` |
+| 6.5 | Edit org-collection | `bw edit org-collection` |
+| 6.6 | Delete org-collection | `bw delete org-collection` |
+| 6.7 | Assign item to collections | `bw edit item-collections` |
+| 6.8 | Move personal item to organization | `bw move` |
+| 6.9 | List organization members | `bw list org-members` |
+| 6.10 | Confirm pending member | `bw confirm org-member` |
+| 6.11 | Device approval (list, approve, deny) | `bw device-approval` |
 
 ---
 
-## Summary
+## 7. Attachments
 
-| Priority | Feature | Status |
-|----------|---------|--------|
-| P0 | ~~Item create~~ | ✅ done |
-| P0 | ~~Item edit~~ | ✅ done |
-| P0 | ~~Item delete (trash + permanent)~~ | ✅ done |
-| P0 | Two-step login (2FA) | pending |
-| P0 | Master password re-prompt | pending |
-| P1 | Folder support | pending |
-| P2 | Password / passphrase generator | pending |
-| P3 | Attachments | pending |
-| P4 | Bitwarden Send | pending |
-| P5 | Organizations & collections | pending |
-| P6 | Import & Export | pending |
-| P7 | ~~`bw status` on startup~~ / show in Status pane | ✅ / pending |
-| P8 | URI match type | pending |
-| P9 | API key login | pending |
-| P10 | Server configuration | pending |
+| # | Feature | CLI |
+|---|---------|-----|
+| 7.1 | Show attachments section in item detail | — |
+| 7.2 | Download attachment | `bw get attachment` |
+| 7.3 | Upload attachment | `bw create attachment` |
+| 7.4 | Delete attachment | `bw delete attachment` |
+
+---
+
+## 8. Bitwarden Send
+
+| # | Feature | CLI |
+|---|---------|-----|
+| 8.1 | List sends | `bw send list` |
+| 8.2 | Create text send | `bw send create` |
+| 8.3 | Create file send | `bw send create -f` |
+| 8.4 | Edit send (name, expiry, access count, password) | `bw send edit` |
+| 8.5 | Delete send | `bw send delete` |
+| 8.6 | Copy send link to clipboard after creation | — |
+| 8.7 | Receive / access a send by URL | `bw send receive` |
+
+---
+
+## 9. Password Generator
+
+| # | Feature | CLI |
+|---|---------|-----|
+| 9.1 | Generate password (length, uppercase, lowercase, numbers, symbols) | `bw generate` |
+| 9.2 | Generate passphrase (words, separator, capitalize, include number) | `bw generate --passphrase` |
+| 9.3 | Generator popup accessible from vault list and create/edit forms | — |
+| 9.4 | One-key insert into focused field | — |
+
+---
+
+## 10. Import & Export
+
+| # | Feature | CLI |
+|---|---------|-----|
+| 10.1 | Export vault as CSV | `bw export --format csv` |
+| 10.2 | Export vault as JSON | `bw export --format json` |
+| 10.3 | Export vault as encrypted JSON | `bw export --format encrypted_json` |
+| 10.4 | Export vault as ZIP (includes attachments) | `bw export --format zip` |
+| 10.5 | Export organization vault | `--organizationid` |
+| 10.6 | Import from supported format | `bw import <format> <path>` |
+| 10.7 | Format picker populated from `bw import --formats` | — |
+
+---
+
+## 11. Sync & Vault State
+
+| # | Feature | CLI |
+|---|---------|-----|
+| 11.1 | ~~Sync vault manually~~ | `bw sync` |
+| 11.2 | Show last sync timestamp in status pane | `bw sync --last` |
+| 11.3 | Check for CLI updates | `bw update` |
+
+---
+
+## 12. Configuration & Server
+
+| # | Feature | CLI |
+|---|---------|-----|
+| 12.1 | ~~Custom theme colors via `config.toml`~~ | — |
+| 12.2 | ~~Save email across sessions~~ | — |
+| 12.3 | Self-hosted server URL configuration | `bw config server <url>` |
+| 12.4 | EU cloud preset (`vault.bitwarden.eu`) | `bw config server` |
+| 12.5 | Individual service URL overrides (API, identity, icons…) | `bw config server --api` |
+| 12.6 | Self-signed certificate support | `NODE_EXTRA_CA_CERTS` |
+
+---
+
+## 13. UI & Shell
+
+| # | Feature | CLI |
+|---|---------|-----|
+| 13.1 | ~~Splash screen with session check spinner~~ | — |
+| 13.2 | ~~Multi-panel vault layout (status, vaults, types, search, list, log)~~ | — |
+| 13.3 | ~~Command log with redacted secrets~~ | — |
+| 13.4 | ~~Mouse support (click, double-click, scroll)~~ | — |
+| 13.5 | ~~Help popup with keybindings~~ | — |
+| 13.6 | ~~Item type icons and favorite indicator~~ | — |
+| 13.7 | ~~Clipboard support (wl-copy, xclip, pbcopy)~~ | — |
+| 13.8 | Local REST API passthrough mode | `bw serve` |
