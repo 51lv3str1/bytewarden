@@ -84,13 +84,16 @@ fn handle_login(app: &mut App, key: KeyEvent) {
 
 fn handle_vault(app: &mut App, key: KeyEvent) {
 
-    match key.code {
-        KeyCode::F(1) => { app.focus_panel(1); return; }
-        KeyCode::F(2) => { app.focus_panel(2); return; }
-        KeyCode::F(3) => { app.focus_panel(3); return; }
-        KeyCode::F(4) => { app.focus_panel(4); return; }
-        KeyCode::F(5) => { app.focus_panel(5); return; }
-        _ => {}
+    // Number keys 0-4 jump to panels — disabled in Search to allow text input
+    if key.modifiers == KeyModifiers::NONE && app.focus != Focus::Search {
+        match key.code {
+            KeyCode::Char('0') => { app.focus_panel(0); return; }
+            KeyCode::Char('1') => { app.focus_panel(1); return; }
+            KeyCode::Char('2') => { app.focus_panel(2); return; }
+            KeyCode::Char('3') => { app.focus_panel(3); return; }
+            KeyCode::Char('4') => { app.focus_panel(4); return; }
+            _ => {}
+        }
     }
 
     // Alt+S: sync from any panel, never conflicts with text input
@@ -106,7 +109,7 @@ fn handle_vault(app: &mut App, key: KeyEvent) {
     }
 
     if key.code == KeyCode::Char('/') && key.modifiers == KeyModifiers::NONE {
-        app.focus_panel(0);
+        app.focus = Focus::Search;
         return;
     }
 

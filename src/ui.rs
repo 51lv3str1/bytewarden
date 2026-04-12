@@ -266,9 +266,10 @@ fn draw_vault(frame: &mut Frame, app: &mut App) {
     render_cmd_bar(frame, area, outer[1], &full, &short, t.dim);
 
     // [5] Status pane
+    let sf = app.focus == Focus::Status;
     let (status_title_style, status_line) = match &app.action_state {
         ActionState::Idle =>
-            (Style::default().fg(t.inactive), Line::from("")),
+            (Style::default().fg(focus_color(sf, t.accent, t.inactive)), Line::from("")),
         _ => (
             Style::default().fg(match &app.action_state {
                 ActionState::Running(_) => t.accent,
@@ -281,8 +282,8 @@ fn draw_vault(frame: &mut Frame, app: &mut App) {
     frame.render_widget(
         Paragraph::new(status_line)
             .block(Block::default().borders(Borders::ALL).border_type(BorderType::Rounded)
-                .title(Span::styled("─Status", status_title_style))
-                .border_style(Style::default().fg(t.inactive))),
+                .title(Span::styled("─[0]-Status", status_title_style))
+                .border_style(Style::default().fg(focus_color(sf, t.accent, t.inactive)))),
         sidebar[0],
     );
 
@@ -741,7 +742,8 @@ fn draw_help_popup(frame: &mut Frame, area: Rect) {
         help_line("j / ↓",    "Move down"),
         help_line("k / ↑",    "Move up"),
         help_line("Enter / l", "Open detail"),
-        help_line("/",         "Search vault"),
+        help_line("/",         "Focus search"),
+        help_line("0-4",       "Jump to panel (0:Status 1:Vaults 2:Items 3:List 4:Log)"),
         help_line("Alt+N",     "New item"),
         help_line("Alt+U",     "Copy username"),
         help_line("Alt+C",     "Copy password"),

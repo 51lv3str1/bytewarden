@@ -84,7 +84,6 @@ fn dispatch_pending(app: &mut App) {
         PendingAction::DeleteItem { permanent }  => app.do_delete_item(permanent),
         PendingAction::RestoreItem               => app.do_restore_item(),
         PendingAction::LoadTrash                 => app.load_trash(),
-        PendingAction::LoadItems                 => app.load_items(),
         PendingAction::None                      => {}
     }
 }

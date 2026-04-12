@@ -71,7 +71,6 @@ pub enum PendingAction {
     DeleteItem { permanent: bool },
     RestoreItem,
     LoadTrash,
-    LoadItems,
 }
 
 // ── Supporting structs ────────────────────────────────────────────────────
@@ -394,7 +393,7 @@ impl App {
 
     pub fn focus_panel(&mut self, n: u8) {
         self.focus = match n {
-            0 => Focus::Search,
+            0 => Focus::Status,
             1 => Focus::Vaults,
             2 => Focus::Items,
             3 => Focus::List,
