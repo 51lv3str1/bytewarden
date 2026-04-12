@@ -644,18 +644,20 @@ impl App {
 
     pub fn do_copy_username(&mut self) {
         let Some(item) = self.selected_item() else { return };
-        let (id, name) = (item.id.clone(), item.name.clone());
-        let cmd    = format!("bw get username {} --session {}", id, self.session_key_display());
-        let result = self.bw.get_username(&id);
-        self.do_bw_copy(&cmd, result, &format!("username for {name}"), "Username copied ✓");
+        let name = item.name.clone();
+        let username = item.login.as_ref().and_then(|l| l.username.clone()).unwrap_or_default();
+        self.set_action(ActionState::Done("Copied ✓".into()));
+        self.push_cmd("clipboard", true, &format!("username for {name}"));
+        self.write_clipboard(username, "Username copied ✓");
     }
 
     pub fn do_copy_password(&mut self) {
         let Some(item) = self.selected_item() else { return };
-        let (id, name) = (item.id.clone(), item.name.clone());
-        let cmd    = format!("bw get password {} --session {}", id, self.session_key_display());
-        let result = self.bw.get_password(&id);
-        self.do_bw_copy(&cmd, result, &format!("password for {name} [hidden]"), "Password copied ✓");
+        let name = item.name.clone();
+        let password = item.login.as_ref().and_then(|l| l.password.clone()).unwrap_or_default();
+        self.set_action(ActionState::Done("Copied ✓".into()));
+        self.push_cmd("clipboard", true, &format!("password for {name} [hidden]"));
+        self.write_clipboard(password, "Password copied ✓");
     }
 
     pub fn do_copy_totp(&mut self, item_id: String) {

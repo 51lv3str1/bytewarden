@@ -191,20 +191,9 @@ impl BwClient {
 
     // ── Single-field getters ──────────────────────────────────────────────
 
-    pub fn get_username(&self, item_id: &str) -> Result<String, String> {
-        self.bw_get_field("username", item_id)
-    }
-    pub fn get_password(&self, item_id: &str) -> Result<String, String> {
-        self.bw_get_field("password", item_id)
-    }
     pub fn get_totp(&self, item_id: &str) -> Result<String, String> {
-        self.bw_get_field("totp", item_id)
-    }
-
-    /// `bw get <field> <item_id> --session` — shared by username/password/totp.
-    fn bw_get_field(&self, field: &str, item_id: &str) -> Result<String, String> {
         let session = self.session()?;
-        let out     = bw_run(&["get", field, item_id, "--session", session])?;
+        let out     = bw_run(&["get", "totp", item_id, "--session", session])?;
         if out.status.success() { Ok(stdout_str(&out)) } else { Err(stderr_str(&out)) }
     }
 
