@@ -5,7 +5,7 @@
 
 use crate::app::{App, EditField, Focus, LoginField, Screen, ITEM_FILTERS, CREATE_ITEM_TYPES, ItemFilter};
 use crate::app::config;
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers,
+use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers,
                         MouseEvent, MouseEventKind, MouseButton};
 
 // ── Public entry point ────────────────────────────────────────────────────
@@ -18,16 +18,17 @@ fn is_alt(key: &KeyEvent) -> bool {
     key.modifiers.contains(KeyModifiers::ALT)
 }
 
-pub fn handle_events(app: &mut App) -> std::io::Result<()> {
-    match event::read()? {
+/// Dispatch a pre-read crossterm event.
+pub fn handle_events(app: &mut App, ev: Event) {
+    match ev {
         Event::Key(key) => {
-            if key.kind != KeyEventKind::Press { return Ok(()); }
+            if key.kind != KeyEventKind::Press { return; }
             if key.code == KeyCode::Char('c') && key.modifiers == KeyModifiers::CONTROL {
                 app.should_quit = true;
-                return Ok(());
+                return;
             }
             match app.screen.clone() {
-                Screen::Splash        => {} // no input during splash
+                Screen::Splash        => {}
                 Screen::Login         => handle_login(app, key),
                 Screen::Vault         => handle_vault(app, key),
                 Screen::Detail        => handle_detail(app, key),
@@ -39,7 +40,6 @@ pub fn handle_events(app: &mut App) -> std::io::Result<()> {
         Event::Mouse(mouse) => handle_mouse(app, mouse),
         _ => {}
     }
-    Ok(())
 }
 
 // ── Login ─────────────────────────────────────────────────────────────────

@@ -41,10 +41,18 @@ fn main() -> Result<()> {
 }
 
 fn run_loop(terminal: &mut ratatui::DefaultTerminal, app: &mut App) -> color_eyre::Result<()> {
-    // Counts frames since last Done/Error state — clears the status after ~1.5 s.
     let mut done_ticks: u8 = 0;
+    let mut last_size = terminal.size()?;
 
     loop {
+        // Detect terminal resize regardless of whether Event::Resize is delivered.
+        // terminal.size() is a cheap ioctl — safe to call every iteration.
+        let size = terminal.size()?;
+        if size != last_size {
+            last_size = size;
+            terminal.clear()?;
+        }
+
         terminal.draw(|frame| ui::draw(frame, app))?;
 
         // Dispatch any pending action AFTER the Running frame is drawn,
@@ -56,7 +64,8 @@ fn run_loop(terminal: &mut ratatui::DefaultTerminal, app: &mut App) -> color_eyr
         }
 
         if event::poll(poll_timeout(&app.action_state))? {
-            events::handle_events(app)?;
+            let ev = event::read()?;
+            events::handle_events(app, ev);
             app.reset_activity();
         } else {
             app.check_auto_lock();
@@ -88,10 +97,10 @@ fn dispatch_pending(app: &mut App) {
     }
 }
 
-/// Poll timeout — fast during animation, slow when idle.
+/// Poll timeout — fast during animation, short when idle to catch resize events.
 fn poll_timeout(state: &ActionState) -> Duration {
     match state {
-        ActionState::Idle => Duration::from_secs(60),
+        ActionState::Idle => Duration::from_millis(500),
         _                 => Duration::from_millis(80),
     }
 }

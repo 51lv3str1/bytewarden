@@ -95,43 +95,35 @@ fn draw_login(frame: &mut Frame, app: &mut App) {
     // form rows: pad(1)+email-lbl(1)+email-in(3)+pass-lbl(1)+pass-in(3)
     //            +save(1)+autolock(1)+strip(2)+border(2) = 15
     let form_height: u16 = 15;
-    let logo_h: u16 = 18;
-    let show_logo = area.height >= logo_h + form_height + 4;
 
-    let (logo_chunk, title_chunk, form_chunk, bar_chunk) = if show_logo {
-        let c = Layout::vertical([
-            Constraint::Length(logo_h),
-            Constraint::Length(form_height),
-            Constraint::Min(0),
-            Constraint::Length(2),
-        ]).split(area);
-        (Some(c[0]), c[0], c[1], c[3])
-    } else {
-        let c = Layout::vertical([
-            Constraint::Min(0),
-            Constraint::Length(1),
-            Constraint::Length(form_height),
-            Constraint::Min(0),
-            Constraint::Length(2),
-        ]).split(area);
-        (None, c[1], c[2], c[4])
-    };
+    // Responsive vertical layout: stars fill above (2/3) and below (1/3),
+    // form stays fixed height, cmd bar at bottom.
+    let c = Layout::vertical([
+        Constraint::Fill(2),
+        Constraint::Length(form_height),
+        Constraint::Fill(1),
+        Constraint::Length(2),
+    ]).split(area);
+    let (logo_chunk, form_chunk, lower_chunk, bar_chunk) = (c[0], c[1], c[2], c[3]);
 
     // ── Starfield + figlet logo ───────────────────────────────────────────
-    if let Some(logo_area) = logo_chunk {
-        render_logo(frame, app, logo_area);
+    if logo_chunk.height >= 6 {
+        render_logo(frame, app, logo_chunk);
     } else {
-        frame.render_widget(
-            Paragraph::new(Line::from(vec![
-                Span::styled("bytewarden", Style::default().fg(t.accent).add_modifier(Modifier::BOLD)),
-                Span::styled(" v0.1.0",   Style::default().fg(t.inactive)),
-            ])).alignment(Alignment::Center),
-            title_chunk,
-        );
+        fill_stars(frame, logo_chunk);
     }
 
+    // Fill any remaining vertical space below the form with stars
+    fill_stars(frame, lower_chunk);
+
     // ── Form ─────────────────────────────────────────────────────────────
-    let form_area = center_rect(60, form_height, form_chunk);
+    // Responsive width: min 44, max 72, centered horizontally.
+    let form_w = area.width.saturating_sub(8).clamp(44, 72);
+    let form_area = Layout::horizontal([
+        Constraint::Fill(1),
+        Constraint::Length(form_w),
+        Constraint::Fill(1),
+    ]).split(form_chunk)[1];
     let form_border = if app.login_error { Style::default().fg(t.error) }
                       else               { Style::default().fg(t.accent) };
     let block = Block::default()
@@ -944,13 +936,23 @@ const STAR_MID:    Color = Color::Rgb(90,  84,  148);
 const STAR_BRIGHT: Color = Color::Rgb(185, 178, 248);
 
 /// Deterministic star character and color for a given (row, col) cell.
+/// Uses avalanche bit-mixing to avoid spatial patterns on large screens.
 fn star_char_at(row: usize, col: usize) -> (char, Color) {
-    let h = row.wrapping_mul(17).wrapping_add(col.wrapping_mul(31)).wrapping_add(row.wrapping_mul(col)) % 120;
-    match h {
-        0     => ('\u{2726}', STAR_BRIGHT),
-        1 | 2 => ('\u{00b7}', STAR_MID),
-        3     => ('\u{22c6}', STAR_DIM),
-        _     => (' ',        STAR_DIM),
+    // Mix row and col independently then combine — avoids the clustering
+    // that multiplicative row*col terms produce on large terminals.
+    let mut h = row.wrapping_mul(2654435761).wrapping_add(col.wrapping_mul(2246822519));
+    h ^= h >> 13;
+    h = h.wrapping_mul(1274126177);
+    h ^= h >> 16;
+    h ^= col.wrapping_mul(374761393).wrapping_add(row.wrapping_mul(668265263));
+    h ^= h >> 15;
+
+    // Densities: ✦ 0.3% · 0.7% ⋆ 1.0%  space 98%
+    match h % 1000 {
+        0  ..= 2  => ('\u{2726}', STAR_BRIGHT), // ✦ bright — very rare
+        3  ..= 9  => ('\u{00b7}', STAR_MID),    // · medium dot
+        10 ..= 19 => ('\u{22c6}', STAR_DIM),    // ⋆ dim star
+        _         => (' ',        STAR_DIM),
     }
 }
 
