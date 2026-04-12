@@ -123,7 +123,7 @@ The feedback strip at the bottom shows login state:
 
 | Panel | Label | Description |
 |-------|-------|-------------|
-| `[5]` | Status | Action feedback — spinner, ✓, ✕. Read-only. |
+| `[0]` | Status | Action feedback — spinner, ✓, ✕. Read-only. |
 | `[1]` | Vaults | Vault selector (currently My Vault). |
 | `[2]` | Items | Item type filter. |
 | `[/]` | Search | Live fuzzy search bar. |
@@ -134,12 +134,15 @@ The feedback strip at the bottom shows login state:
 
 | Key | Action |
 |-----|--------|
-| `F1` | Focus **[1]-Vaults** |
-| `F2` | Focus **[2]-Items** |
-| `F3` | Focus **[3]-Vault** |
-| `F4` | Focus **[4]-Command Log** |
+| `0` | Focus **[0]-Status** |
+| `1` | Focus **[1]-Vaults** |
+| `2` | Focus **[2]-Items** |
+| `3` | Focus **[3]-Vault** |
+| `4` | Focus **[4]-Command Log** |
 | `/` | Focus **[/]-Search** |
 | `Tab` | Cycle: Search → Vaults → Items → List → CmdLog → Search |
+
+Number keys `0`–`4` are disabled while Search is focused to allow typing.
 
 ### Vault list actions
 
@@ -148,15 +151,17 @@ The feedback strip at the bottom shows login state:
 | `j` / `k` or `↑` `↓` | Navigate up / down |
 | `PgUp` / `PgDn` | Scroll 10 items |
 | `Enter` / `l` | Open item detail |
-| `n` | **New item** — create a new vault item |
-| `u` | Copy username to clipboard |
-| `c` | Copy password to clipboard |
-| `f` | Toggle favorite ★ |
-| `s` | Sync vault with server |
-| `D` | **Delete item** — opens confirmation popup |
-| `L` | Lock vault (logged to Command Log) |
-| `q` | Lock vault |
+| `Alt+N` | **New item** — create a new vault item |
+| `Alt+U` | Copy username to clipboard |
+| `Alt+C` | Copy password to clipboard |
+| `Alt+F` | Toggle favorite ★ |
+| `Alt+S` | Sync vault with server |
+| `Alt+D` | **Delete item** — opens confirmation popup |
+| `Alt+L` | Lock vault |
+| `Alt+Q` | Lock vault |
 | `?` | Help popup |
+
+All `Alt+` shortcuts also work while the **Search** bar is focused.
 
 ### Search
 
@@ -179,9 +184,9 @@ All Items · ★ Favorites · Login · Card · Identity · Secure Note · SSH Ke
 | `Tab` / `Shift+Tab` | Move between fields (wraps) |
 | `PgUp` / `PgDn` | Same as `k` / `j` |
 | `F2` | Toggle reveal on selected hidden field |
-| `c` | Copy selected field to clipboard |
-| `e` | **Enter edit mode** |
-| `D` | **Delete item** — opens confirmation popup |
+| `Alt+C` | Copy selected field to clipboard |
+| `Alt+E` | **Enter edit mode** |
+| `Alt+D` | **Delete item** — opens confirmation popup |
 | `Esc` / `h` | Back to vault |
 
 Hidden fields (Password, Card Number, CVV, TOTP, SSN, Passport, License, custom hidden fields) show `●●●●●●●●` until `F2` is pressed. Navigating away re-hides the field.
@@ -206,7 +211,7 @@ The **Type** field is read-only. All other fields are editable. Changes are save
 
 ## Create screen
 
-Press `n` from the vault list to create a new item.
+Press `Alt+N` from the vault list (or search bar) to create a new item.
 
 **Step 1 — choose type:**
 
@@ -301,7 +306,7 @@ Enable on the login screen or set `auto_lock = true` in config. The vault locks 
 
 Every `bw` CLI call is logged with its result. Session keys are always redacted as `***`. Passwords, TOTP codes, and clipboard values are logged as `[hidden]`. Keeps the last 50 entries.
 
-Focus with `F4`, scroll with `j`/`k` (1 line) or `PgUp`/`PgDn` (5 lines).
+Focus with `4`, scroll with `j`/`k` (1 line) or `PgUp`/`PgDn` (5 lines).
 
 ---
 
@@ -320,19 +325,19 @@ Detected automatically at runtime:
 ## Keyboard reference
 
 ```
-LOGIN                      VAULT LIST                    DETAIL (read)
+LOGIN                      VAULT LIST / SEARCH           DETAIL (read)
 ─────────────────────      ────────────────────────────  ───────────────────────
-Tab/S+Tab  next field      F1-F4   focus panel           j/k / Tab   prev/next field
-Enter      login/unlock    /       search                F2          reveal/hide
-Space      toggle check    j/k     navigate              c           copy field
-←→         cursor          Enter   open detail           e           edit item
-Ctrl+C     quit            n       new item              D           delete item
-                           u       copy username         Esc/h       back to vault
-                           c       copy password
-                           f       toggle favorite       DETAIL (edit)
-                           s       sync vault            ─────────────────────────
-                           D       delete item           Tab/S+Tab   next/prev field
-                           L/q     lock vault            ←→          cursor in field
+Tab/S+Tab  next field      0-4     focus panel           j/k / Tab   prev/next field
+Enter      login/unlock    /       focus search          F2          reveal/hide
+Space      toggle check    j/k     navigate              Alt+C       copy field
+←→         cursor          Enter   open detail           Alt+E       edit item
+Ctrl+C     quit            Alt+N   new item              Alt+D       delete item
+                           Alt+U   copy username         Esc/h       back to vault
+                           Alt+C   copy password
+                           Alt+F   toggle favorite       DETAIL (edit)
+                           Alt+S   sync vault            ─────────────────────────
+                           Alt+D   delete item           Tab/S+Tab   next/prev field
+                           Alt+L   lock vault            ←→          cursor in field
                            ?       help                  F2          reveal/hide
                                                          Enter       save
 CREATE (type select)        CREATE (fill fields)         Esc         cancel edit
