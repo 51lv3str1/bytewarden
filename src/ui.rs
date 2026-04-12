@@ -240,17 +240,22 @@ fn draw_vault(frame: &mut Frame, app: &mut App) {
 
     // Keybindings bar — dynamic based on focused panel and view context
     let hints_pairs: &[(&str, &str)] = match app.focus {
-        Focus::Search => &[
-            ("Esc","clear"), ("j/k","navigate"), ("Enter","open detail"), ("type","filter"),
-        ],
+        Focus::Search => if app.is_trash_view() { &[
+            ("Esc","clear"), ("j/k","navigate"), ("Enter","detail"),
+            ("Alt+R","restore"), ("Alt+D","delete"), ("Alt+L","lock"),
+        ]} else { &[
+            ("Esc","clear"), ("j/k","navigate"), ("Enter","detail"),
+            ("Alt+N","new"), ("Alt+U","user"), ("Alt+C","pass"), ("Alt+F","fav"),
+            ("Alt+S","sync"), ("Alt+D","delete"), ("Alt+L","lock"),
+        ]},
         Focus::Items => &[
-            ("j/k","select filter"), ("Enter","apply"), ("Tab","next panel"),
+            ("j/k","select filter"), ("Enter","apply"), ("Tab","next panel"), ("?","help"),
         ],
         Focus::Vaults => &[
-            ("Tab","next panel"),
+            ("Tab","next panel"), ("?","help"),
         ],
         Focus::CmdLog => &[
-            ("j/k","scroll"), ("PgUp/Dn","scroll×5"), ("Tab","next panel"),
+            ("j/k","scroll"), ("PgUp/Dn","scroll×5"), ("Tab","next panel"), ("?","help"),
         ],
         Focus::List | Focus::Status => if app.is_trash_view() { &[
             ("j/k","navigate"), ("Enter","detail"),

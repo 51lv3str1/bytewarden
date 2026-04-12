@@ -115,7 +115,8 @@ fn handle_vault(app: &mut App, key: KeyEvent) {
 
     match app.focus.clone() {
         Focus::Status | Focus::Vaults => match key.code {
-            KeyCode::Tab | KeyCode::Esc => app.cycle_focus(),
+            KeyCode::Tab | KeyCode::Esc  => app.cycle_focus(),
+            KeyCode::Char('?')           => app.screen = Screen::Help,
             _ => {}
         },
 
@@ -124,6 +125,7 @@ fn handle_vault(app: &mut App, key: KeyEvent) {
             KeyCode::Char('k') | KeyCode::Up    | KeyCode::PageUp   => app.filter_move_up(),
             KeyCode::Enter                                            => app.apply_filter(),
             KeyCode::Tab | KeyCode::Esc                              => app.cycle_focus(),
+            KeyCode::Char('?')                                        => app.screen = Screen::Help,
             _ => {}
         },
 
@@ -141,7 +143,18 @@ fn handle_vault(app: &mut App, key: KeyEvent) {
                 }
             }
             KeyCode::Backspace => { app.search_query.pop(); app.perform_search(); }
-            KeyCode::Char(c)   => { app.search_query.push(c); app.perform_search(); }
+            // Alt+key shortcuts — same as List panel
+            KeyCode::Char('q') if is_alt(&key) => app.lock_vault(),
+            KeyCode::Char('d') if is_alt(&key) => app.open_confirm_delete(),
+            KeyCode::Char('r') if is_alt(&key) && app.is_trash_view()  => app.queue_restore_item(),
+            KeyCode::Char('u') if is_alt(&key) && !app.is_trash_view() => app.copy_username_to_clipboard(),
+            KeyCode::Char('c') if is_alt(&key) && !app.is_trash_view() => app.copy_password_to_clipboard(),
+            KeyCode::Char('f') if is_alt(&key) && !app.is_trash_view() => app.toggle_favorite(),
+            KeyCode::Char('n') if is_alt(&key) && !app.is_trash_view() => app.open_create(),
+            // Plain char — only feed into search query when no modifiers active
+            KeyCode::Char(c) if key.modifiers == KeyModifiers::NONE => {
+                app.search_query.push(c); app.perform_search();
+            }
             _ => {}
         },
 
@@ -170,6 +183,7 @@ fn handle_vault(app: &mut App, key: KeyEvent) {
             KeyCode::PageDown                    => app.cmd_log_scroll_down(5),
             KeyCode::PageUp                      => app.cmd_log_scroll_up(5),
             KeyCode::Tab | KeyCode::Esc          => app.cycle_focus(),
+            KeyCode::Char('?')                   => app.screen = Screen::Help,
             _ => {}
         },
     }
