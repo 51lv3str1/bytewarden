@@ -93,8 +93,8 @@ fn draw_login(frame: &mut Frame, app: &mut App) {
     let area = frame.area();
 
     // form rows: pad(1)+email-lbl(1)+email-in(3)+pass-lbl(1)+pass-in(3)
-    //            +save(1)+autolock(1)+strip(2)+border(2) = 15
-    let form_height: u16 = 15;
+    //            +[otp-lbl(1)+otp-in(3)]+save(1)+autolock(1)+strip(2)+border(2)
+    let form_height: u16 = if app.otp_required { 19 } else { 15 };
 
     // Responsive vertical layout: stars fill above (2/3) and below (1/3),
     // form stays fixed height, cmd bar at bottom.
@@ -134,18 +134,43 @@ fn draw_login(frame: &mut Frame, app: &mut App) {
     frame.render_widget(block, form_area);
     app.mouse_areas.login = Some(form_area);
 
-    let f = Layout::vertical([
-        Constraint::Length(1), // [0] padding
-        Constraint::Length(1), // [1] email label
-        Constraint::Length(3), // [2] email input
-        Constraint::Length(1), // [3] pass label
-        Constraint::Length(3), // [4] pass input
-        Constraint::Length(1), // [5] save email
-        Constraint::Length(1), // [6] auto-lock
-        Constraint::Length(2), // [7] feedback/error strip
-    ]).split(inner);
+    // ── Email ─────────────────────────────────────────────────────────────
+    // Build the vertical splits dynamically so the OTP rows only exist when needed.
+    let (idx_otp_lbl, idx_otp_in, idx_save, idx_lock, idx_strip, f);
+    if app.otp_required {
+        // pad(1)+email-lbl(1)+email-in(3)+pass-lbl(1)+pass-in(3)
+        //   +otp-lbl(1)+otp-in(3)+save(1)+lock(1)+strip(2) = 17 inner rows + 2 border = 19
+        let splits = Layout::vertical([
+            Constraint::Length(1), // [0] padding
+            Constraint::Length(1), // [1] email label
+            Constraint::Length(3), // [2] email input
+            Constraint::Length(1), // [3] pass label
+            Constraint::Length(3), // [4] pass input
+            Constraint::Length(1), // [5] otp label
+            Constraint::Length(3), // [6] otp input
+            Constraint::Length(1), // [7] save email
+            Constraint::Length(1), // [8] auto-lock
+            Constraint::Length(2), // [9] feedback strip
+        ]).split(inner);
+        (idx_otp_lbl, idx_otp_in, idx_save, idx_lock, idx_strip) = (5, 6, 7, 8, 9);
+        f = splits;
+    } else {
+        // pad(1)+email-lbl(1)+email-in(3)+pass-lbl(1)+pass-in(3)+save(1)+lock(1)+strip(2) = 13 inner + 2 border = 15
+        let splits = Layout::vertical([
+            Constraint::Length(1), // [0] padding
+            Constraint::Length(1), // [1] email label
+            Constraint::Length(3), // [2] email input
+            Constraint::Length(1), // [3] pass label
+            Constraint::Length(3), // [4] pass input
+            Constraint::Length(1), // [5] save email
+            Constraint::Length(1), // [6] auto-lock
+            Constraint::Length(2), // [7] feedback strip
+        ]).split(inner);
+        (idx_otp_lbl, idx_otp_in, idx_save, idx_lock, idx_strip) = (0, 0, 5, 6, 7);
+        f = splits;
+    }
+    let _ = (idx_otp_lbl, idx_otp_in); // suppress unused when not rendered below
 
-    // Email
     frame.render_widget(Paragraph::new("Email:").style(Style::default().fg(t.dim)), f[1]);
     let email_foc = app.active_field == LoginField::Email;
     frame.render_widget(
@@ -154,7 +179,7 @@ fn draw_login(frame: &mut Frame, app: &mut App) {
         f[2],
     );
 
-    // Password
+    // ── Password ──────────────────────────────────────────────────────────
     frame.render_widget(Paragraph::new(Line::from(vec![
         Span::styled("Master Password:", Style::default().fg(t.dim)),
         Span::styled("  (F2: reveal)", Style::default().fg(
@@ -163,10 +188,8 @@ fn draw_login(frame: &mut Frame, app: &mut App) {
     ])), f[3]);
     let pass_foc = app.active_field == LoginField::Password;
     let pass_line = if app.login_password_visible {
-        // Show plain text with cursor
         input_with_cursor(&app.password_input, app.password_cursor, pass_foc, t.accent)
     } else {
-        // Masked
         let masked_before = "●".repeat(app.password_cursor);
         let masked_after  = "●".repeat(app.password_input.chars().count().saturating_sub(app.password_cursor));
         if pass_foc {
@@ -184,27 +207,57 @@ fn draw_login(frame: &mut Frame, app: &mut App) {
         f[4],
     );
 
-    // Checkboxes
-    render_checkbox(frame, "Save email",                app.save_email,  app.active_field == LoginField::SaveEmail, t.accent, t.inactive, f[5]);
-    let lock_label = format!("Auto-lock after {} min", app.lock_after_secs / 60);
-    render_checkbox(frame, &lock_label, app.auto_lock, app.active_field == LoginField::AutoLock, t.accent, t.inactive, f[6]);
+    // ── OTP (new device verification) ─────────────────────────────────────
+    if app.otp_required {
+        frame.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::styled("Verification Code:", Style::default().fg(t.dim)),
+                Span::styled("  (sent to your email)", Style::default().fg(t.dim)),
+            ])),
+            f[idx_otp_lbl],
+        );
+        let otp_foc = app.active_field == LoginField::Otp;
+        frame.render_widget(
+            Paragraph::new(input_with_cursor(&app.otp_input, app.otp_cursor, otp_foc, t.accent))
+                .block(rounded_block(focus_border(otp_foc, t.accent))),
+            f[idx_otp_in],
+        );
+    }
 
-    // Feedback/error strip
+    // ── Checkboxes ────────────────────────────────────────────────────────
+    render_checkbox(frame, "Save email",  app.save_email,  app.active_field == LoginField::SaveEmail, t.accent, t.inactive, f[idx_save]);
+    let lock_label = format!("Auto-lock after {} min", app.lock_after_secs / 60);
+    render_checkbox(frame, &lock_label, app.auto_lock, app.active_field == LoginField::AutoLock, t.accent, t.inactive, f[idx_lock]);
+
+    // ── Feedback/error strip ──────────────────────────────────────────────
     let strip_block = Block::default().borders(Borders::TOP)
         .border_style(Style::default().fg(Color::Rgb(60, 40, 80)));
     if app.login_error {
+        let msg = if app.otp_required {
+            "Invalid verification code. Please try again."
+        } else {
+            "Invalid credentials. Please try again."
+        };
         frame.render_widget(
             Paragraph::new(Line::from(vec![
                 Span::styled(" ✕ ", Style::default().fg(t.error).add_modifier(Modifier::BOLD)),
-                Span::styled("Invalid credentials. Please try again.", Style::default().fg(t.error)),
+                Span::styled(msg, Style::default().fg(t.error)),
             ])).block(strip_block),
-            f[7],
+            f[idx_strip],
+        );
+    } else if app.otp_required {
+        frame.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::styled(" ✉ ", Style::default().fg(t.accent).add_modifier(Modifier::BOLD)),
+                Span::styled("Check your email for the verification code.", Style::default().fg(t.accent)),
+            ])).block(strip_block),
+            f[idx_strip],
         );
     } else if let Some(line) = action_line(app) {
-        frame.render_widget(Paragraph::new(line).block(strip_block), f[7]);
+        frame.render_widget(Paragraph::new(line).block(strip_block), f[idx_strip]);
     }
 
-    // Bottom hints bar
+    // ── Bottom hints bar ──────────────────────────────────────────────────
     render_cmd_bar(frame, area, bar_chunk,
         "Tab: field  |  F2: reveal password  |  Space: toggle  |  Enter: login  |  ←→: cursor  |  Ctrl+C: quit",
         "Tab:field  F2:reveal  Enter:login  ^C:quit", t.dim);

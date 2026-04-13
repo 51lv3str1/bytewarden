@@ -1,6 +1,6 @@
 /// app.rs — Global application state
 
-use crate::bw::{BwClient, Item, VaultStatus, IdentityData, item_type_label};
+use crate::bw::{BwClient, Item, LoginResult, VaultStatus, IdentityData, item_type_label};
 use std::process::{Command, Stdio};
 use std::io::Write;
 
@@ -51,7 +51,7 @@ pub const ITEM_FILTERS: &[ItemFilter] = &[
 ];
 
 #[derive(Debug, PartialEq, Clone)]
-pub enum LoginField { Email, Password, SaveEmail, AutoLock }
+pub enum LoginField { Email, Password, Otp, SaveEmail, AutoLock }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ActionState { Idle, Running(String), Done(String), Error(String) }
@@ -212,6 +212,9 @@ pub struct App {
     pub email_cursor:    usize,
     pub password_input:  String,
     pub password_cursor: usize,
+    pub otp_input:       String,
+    pub otp_cursor:      usize,
+    pub otp_required:    bool,
     pub active_field:    LoginField,
     pub login_error:     bool,
     pub save_email:      bool,
@@ -263,6 +266,7 @@ impl App {
             trashed_items: Vec::new(),
             email_input: saved_email.clone(), email_cursor: saved_email.len(),
             password_input: String::new(), password_cursor: 0,
+            otp_input: String::new(), otp_cursor: 0, otp_required: false,
             active_field: if cfg.save_email { LoginField::Password } else { LoginField::Email },
             login_error: false, save_email: cfg.save_email,
             search_query: String::new(),
@@ -500,23 +504,71 @@ impl App {
     pub fn do_login(&mut self) {
         let email    = self.email_input.clone();
         let password = self.password_input.clone();
+
         let already_auth = matches!(
             self.bw.status().map(|s| s.status),
             Ok(VaultStatus::Locked) | Ok(VaultStatus::Unlocked)
         );
-        let result = if already_auth { self.bw.unlock(&password) } else { self.bw.login(&email, &password) };
 
-        match result {
-            Ok(_) => {
+        // If vault is locked, unlock it (no OTP path for unlock).
+        if already_auth {
+            match self.bw.unlock(&password) {
+                Ok(_) => {
+                    if self.save_email { config::write(true, Some(&email)); }
+                    self.password_input.clear(); self.password_cursor = 0;
+                    self.load_items();
+                    self.set_action(ActionState::Done("Loaded ✓".into()));
+                    self.go_to_vault();
+                }
+                Err(_) => {
+                    self.push_cmd("bw unlock ***", false, "invalid credentials");
+                    self.set_action(ActionState::Idle);
+                    self.set_login_error();
+                }
+            }
+            return;
+        }
+
+        // Fresh login — may require device-verification OTP.
+        if self.otp_required {
+            let otp = self.otp_input.trim().to_string();
+            match self.bw.login_with_otp(&email, &password, &otp) {
+                Ok(_) => {
+                    if self.save_email { config::write(true, Some(&email)); }
+                    self.password_input.clear(); self.password_cursor = 0;
+                    self.otp_input.clear(); self.otp_cursor = 0; self.otp_required = false;
+                    self.load_items();
+                    self.set_action(ActionState::Done("Loaded ✓".into()));
+                    self.go_to_vault();
+                }
+                Err(_) => {
+                    self.push_cmd("bw login *** --code [hidden] --raw", false, "invalid OTP");
+                    self.set_action(ActionState::Idle);
+                    self.otp_input.clear(); self.otp_cursor = 0;
+                    self.active_field = LoginField::Otp;
+                    self.login_error = true;
+                }
+            }
+            return;
+        }
+
+        match self.bw.login(&email, &password) {
+            LoginResult::Success(_key) => {
                 if self.save_email { config::write(true, Some(&email)); }
-                self.password_input.clear();
-                self.password_cursor = 0;
+                self.password_input.clear(); self.password_cursor = 0;
                 self.load_items();
                 self.set_action(ActionState::Done("Loaded ✓".into()));
                 self.go_to_vault();
             }
-            Err(_) => {
-                self.push_cmd("bw auth *** --raw", false, "invalid credentials");
+            LoginResult::NeedsOtp => {
+                self.push_cmd("bw login *** --raw", true, "device verification required — OTP sent");
+                self.set_action(ActionState::Idle);
+                self.otp_required = true;
+                self.otp_input.clear(); self.otp_cursor = 0;
+                self.active_field = LoginField::Otp;
+            }
+            LoginResult::Failed(err) => {
+                self.push_cmd("bw login *** --raw", false, &err);
                 self.set_action(ActionState::Idle);
                 self.set_login_error();
             }
@@ -906,6 +958,7 @@ impl App {
         match self.active_field {
             LoginField::Email    => Some((&mut self.email_input,    &mut self.email_cursor)),
             LoginField::Password => Some((&mut self.password_input, &mut self.password_cursor)),
+            LoginField::Otp      => Some((&mut self.otp_input,      &mut self.otp_cursor)),
             _                    => None,
         }
     }
@@ -951,6 +1004,7 @@ impl App {
         let len = match self.active_field {
             LoginField::Email    => self.email_input.chars().count(),
             LoginField::Password => self.password_input.chars().count(),
+            LoginField::Otp      => self.otp_input.chars().count(),
             _                    => return,
         };
         if let Some((_, cursor)) = self.login_text_mut() { if *cursor < len { *cursor += 1; } }
@@ -962,6 +1016,7 @@ impl App {
         let len = match self.active_field {
             LoginField::Email    => self.email_input.chars().count(),
             LoginField::Password => self.password_input.chars().count(),
+            LoginField::Otp      => self.otp_input.chars().count(),
             _                    => return,
         };
         if let Some((_, cursor)) = self.login_text_mut() { *cursor = len; }
@@ -1001,6 +1056,10 @@ impl App {
         self.login_error = true;
         self.password_input.clear();
         self.password_cursor = 0;
+        self.otp_input.clear();
+        self.otp_cursor = 0;
+        self.otp_required = false;
+        self.active_field = LoginField::Password;
     }
     pub fn clear_login_error(&mut self) { self.login_error = false; }
 

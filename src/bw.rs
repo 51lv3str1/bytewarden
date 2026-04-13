@@ -93,6 +93,21 @@ pub struct BwStatusInfo {
     #[allow(dead_code)] pub server_url: Option<String>,  // P7: show in status pane
 }
 
+// ── LoginResult ───────────────────────────────────────────────────────────
+
+#[derive(Debug)]
+pub enum LoginResult {
+    Success(String),
+    /// `bw` detected a new device and sent an OTP to the account email.
+    NeedsOtp,
+    Failed(String),
+}
+
+fn combined_needs_otp(text: &str) -> bool {
+    let lower = text.to_lowercase();
+    lower.contains("new device") || lower.contains("enter otp") || lower.contains("verification required")
+}
+
 // ── BwClient ──────────────────────────────────────────────────────────────
 
 pub struct BwClient {
@@ -124,8 +139,28 @@ impl BwClient {
         })
     }
 
-    pub fn login(&mut self, email: &str, password: &str) -> Result<String, String> {
-        let out = bw_run(&["login", email, password, "--raw"])?;
+    pub fn login(&mut self, email: &str, password: &str) -> LoginResult {
+        let out = match bw_run(&["login", email, password, "--raw"]) {
+            Ok(o)  => o,
+            Err(e) => return LoginResult::Failed(e),
+        };
+        if out.status.success() {
+            let key = stdout_str(&out);
+            self.session_key = Some(key.clone());
+            return LoginResult::Success(key);
+        }
+        // bw exits with error when it needs an OTP but stdin is empty.
+        // Detect it via the prompt text that appears on stdout.
+        let combined = format!("{}\n{}", stdout_str(&out), stderr_str(&out));
+        if combined_needs_otp(&combined) {
+            return LoginResult::NeedsOtp;
+        }
+        LoginResult::Failed(stderr_str(&out))
+    }
+
+    /// Login supplying the device-verification OTP code on the first attempt.
+    pub fn login_with_otp(&mut self, email: &str, password: &str, otp: &str) -> Result<String, String> {
+        let out = bw_run(&["login", email, password, "--code", otp, "--raw"])?;
         if out.status.success() {
             let key = stdout_str(&out);
             self.session_key = Some(key.clone());

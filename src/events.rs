@@ -49,7 +49,8 @@ fn handle_login(app: &mut App, key: KeyEvent) {
         KeyCode::Tab => {
             app.active_field = match app.active_field {
                 LoginField::Email     => LoginField::Password,
-                LoginField::Password  => LoginField::SaveEmail,
+                LoginField::Password  => if app.otp_required { LoginField::Otp } else { LoginField::SaveEmail },
+                LoginField::Otp       => LoginField::SaveEmail,
                 LoginField::SaveEmail => LoginField::AutoLock,
                 LoginField::AutoLock  => LoginField::Email,
             };
@@ -75,6 +76,15 @@ fn handle_login(app: &mut App, key: KeyEvent) {
                 app.clear_login_error();
                 app.insert_char(c);
             }
+        }
+        KeyCode::BackTab => {
+            app.active_field = match app.active_field {
+                LoginField::AutoLock  => LoginField::SaveEmail,
+                LoginField::SaveEmail => if app.otp_required { LoginField::Otp } else { LoginField::Password },
+                LoginField::Otp       => LoginField::Password,
+                LoginField::Password  => LoginField::Email,
+                LoginField::Email     => LoginField::AutoLock,
+            };
         }
         _ => {}
     }
